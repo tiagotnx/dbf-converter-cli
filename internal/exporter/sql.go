@@ -19,10 +19,19 @@ type SQLExporter struct {
 	w         *bufio.Writer
 	fields    []Field
 	tableName string
+	dialect   string
 	colsList  string // pre-joined "ID, NOME, VALOR" — built once
 }
 
+// NewSQL builds an SQL exporter using the "generic" dialect.
 func NewSQL(w io.Writer, fields []Field, tableName string) (*SQLExporter, error) {
+	return NewSQLWithDialect(w, fields, tableName, "generic")
+}
+
+// NewSQLWithDialect builds an SQL exporter whose CREATE TABLE column types
+// follow the target dialect (generic, postgres, mysql, sqlite). INSERT syntax
+// is portable across all four.
+func NewSQLWithDialect(w io.Writer, fields []Field, tableName, dialect string) (*SQLExporter, error) {
 	if !validIdent.MatchString(tableName) {
 		return nil, fmt.Errorf("invalid SQL table name %q: must match [A-Za-z_][A-Za-z0-9_]*", tableName)
 	}
@@ -31,9 +40,12 @@ func NewSQL(w io.Writer, fields []Field, tableName string) (*SQLExporter, error)
 			return nil, fmt.Errorf("invalid SQL column name %q", f.Name)
 		}
 	}
+	if dialect == "" {
+		dialect = "generic"
+	}
 
 	bw := bufio.NewWriter(w)
-	exp := &SQLExporter{w: bw, fields: fields, tableName: tableName}
+	exp := &SQLExporter{w: bw, fields: fields, tableName: tableName, dialect: dialect}
 
 	// CREATE TABLE preamble
 	var sb strings.Builder
@@ -44,7 +56,7 @@ func NewSQL(w io.Writer, fields []Field, tableName string) (*SQLExporter, error)
 		sb.WriteString("  ")
 		sb.WriteString(f.Name)
 		sb.WriteByte(' ')
-		sb.WriteString(sqlTypeFor(f.Type))
+		sb.WriteString(sqlTypeFor(f.Type, dialect))
 		if i < len(fields)-1 {
 			sb.WriteByte(',')
 		}
@@ -84,16 +96,58 @@ func (e *SQLExporter) Write(row map[string]interface{}) error {
 
 func (e *SQLExporter) Close() error { return e.w.Flush() }
 
-func sqlTypeFor(t byte) string {
-	switch t {
-	case 'N', 'F', 'I':
-		return "NUMERIC"
-	case 'L':
-		return "BOOLEAN"
-	case 'D':
-		return "DATE"
-	default:
-		return "TEXT"
+func sqlTypeFor(t byte, dialect string) string {
+	switch dialect {
+	case "postgres":
+		switch t {
+		case 'N', 'F':
+			return "DOUBLE PRECISION"
+		case 'I':
+			return "INTEGER"
+		case 'L':
+			return "BOOLEAN"
+		case 'D':
+			return "DATE"
+		default:
+			return "TEXT"
+		}
+	case "mysql":
+		switch t {
+		case 'N', 'F':
+			return "DOUBLE"
+		case 'I':
+			return "INT"
+		case 'L':
+			return "TINYINT(1)"
+		case 'D':
+			return "DATE"
+		default:
+			return "TEXT"
+		}
+	case "sqlite":
+		switch t {
+		case 'N', 'F':
+			return "REAL"
+		case 'I':
+			return "INTEGER"
+		case 'L':
+			return "INTEGER"
+		case 'D':
+			return "TEXT"
+		default:
+			return "TEXT"
+		}
+	default: // generic
+		switch t {
+		case 'N', 'F', 'I':
+			return "NUMERIC"
+		case 'L':
+			return "BOOLEAN"
+		case 'D':
+			return "DATE"
+		default:
+			return "TEXT"
+		}
 	}
 }
 

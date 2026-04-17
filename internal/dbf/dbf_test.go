@@ -322,6 +322,76 @@ func TestDetectEncoding(t *testing.T) {
 	assert.Equal(t, "cp850", detectEncoding(0x00), "absent language driver → cp850 (legacy Clipper/dBase default)")
 }
 
+// Some legacy ERPs abuse C-typed columns to store opaque binary payloads
+// (hashes, packed records, signatures). Decoding those as text produces
+// garbled UTF-8 mojibake that downstream consumers can't use. When the raw
+// bytes contain control characters (< 0x20 excluding \t/\r/\n), the reader
+// emits a lowercase hex string of the original bytes — a lossless, AI-ready
+// representation of the field.
+func TestReader_BinaryCharFieldBecomesHex(t *testing.T) {
+	fields := []fieldDef{{name: "BLOB", typ: 'C', length: 8}}
+	// Raw bytes include NUL (0x00), SOH (0x01), DEL (0x7F), and high CP850 bytes.
+	// The NUL and SOH are the smoking guns: valid CP850 text never carries them.
+	raw := []byte{0x00, 0x01, 0xFF, 0x7F, 0xE2, 0x98, 0xA0, 0x02}
+	data := buildBinaryRecord(t, fields, raw)
+
+	r, err := NewReader(bytes.NewReader(data), "cp850")
+	require.NoError(t, err)
+	rec, err := r.Next()
+	require.NoError(t, err)
+
+	got, ok := rec.Values["BLOB"].(string)
+	require.True(t, ok, "binary C field must surface as a string (hex)")
+	assert.Equal(t, "0001ff7fe298a002", got, "all 8 bytes round-trip as lowercase hex")
+}
+
+// Control of the regression: an ordinary text field with high CP850 bytes
+// (accented characters) must still decode as text, NOT hex. The heuristic
+// must not mis-flag valid legacy text.
+func TestReader_AccentedTextStaysText(t *testing.T) {
+	fields := []fieldDef{{name: "NOME", typ: 'C', length: 6}}
+	// "João" in CP850: J o 0xC6 o + two padding spaces. No control bytes.
+	raw := []byte{'J', 'o', 0xC6, 'o', ' ', ' '}
+	data := buildBinaryRecord(t, fields, raw)
+
+	r, err := NewReader(bytes.NewReader(data), "cp850")
+	require.NoError(t, err)
+	rec, err := r.Next()
+	require.NoError(t, err)
+	assert.Equal(t, "João", rec.Values["NOME"], "accented text must remain UTF-8, not hex")
+}
+
+// buildBinaryRecord is a helper that bypasses buildDBF's require.Equal on
+// len(rec)==len(fields) and writes raw field bytes verbatim.
+func buildBinaryRecord(t *testing.T, fields []fieldDef, raw []byte) []byte {
+	t.Helper()
+	recordLength := 1
+	for _, f := range fields {
+		recordLength += int(f.length)
+	}
+	headerLength := 32 + 32*len(fields) + 1
+
+	var buf bytes.Buffer
+	header := make([]byte, 32)
+	header[0] = 0x03
+	binary.LittleEndian.PutUint32(header[4:8], 1)
+	binary.LittleEndian.PutUint16(header[8:10], uint16(headerLength))
+	binary.LittleEndian.PutUint16(header[10:12], uint16(recordLength))
+	buf.Write(header)
+	for _, f := range fields {
+		fd := make([]byte, 32)
+		copy(fd[0:11], f.name)
+		fd[11] = f.typ
+		fd[16] = f.length
+		buf.Write(fd)
+	}
+	buf.WriteByte(0x0D)
+	buf.WriteByte(' ') // not deleted
+	buf.Write(raw)
+	buf.WriteByte(0x1A)
+	return buf.Bytes()
+}
+
 func TestReader_EncodingUTF8Passthrough(t *testing.T) {
 	fields := []fieldDef{{name: "TXT", typ: 'C', length: 6}}
 	records := [][]string{{"João"}}

@@ -9,6 +9,7 @@ package dbf
 
 import (
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -201,11 +202,42 @@ func (r *Reader) decodeField(f Field, raw []byte) (interface{}, error) {
 }
 
 func (r *Reader) decodeText(raw []byte) (interface{}, error) {
+	trimmed := trimFieldPadding(raw)
+	if looksBinary(trimmed) {
+		return hex.EncodeToString(trimmed), nil
+	}
 	decoded, _, err := transform.Bytes(r.decoder, raw)
 	if err != nil {
 		return nil, fmt.Errorf("decoding text: %w", err)
 	}
 	return strings.TrimSpace(string(decoded)), nil
+}
+
+// trimFieldPadding drops trailing 0x00 / 0x20 bytes that DBF writers use to
+// fill unused positions in a fixed-width field. Preserving them in a hex
+// fallback would bloat the output with meaningless "2020..." runs.
+func trimFieldPadding(raw []byte) []byte {
+	end := len(raw)
+	for end > 0 && (raw[end-1] == 0x00 || raw[end-1] == ' ') {
+		end--
+	}
+	return raw[:end]
+}
+
+// looksBinary returns true when the field bytes cannot reasonably be
+// interpreted as legacy CP850 / Windows-1252 / Latin-1 text. The signal is the
+// presence of a non-whitespace control byte (< 0x20, excluding \t, \r, \n):
+// all three supported codepages leave 0x20..0xFF available for printable
+// glyphs, so raw control bytes indicate the column is being used as an opaque
+// binary payload (hash, packed record, signature). Callers must pass the
+// value with trailing 0x00 / space padding already stripped.
+func looksBinary(trimmed []byte) bool {
+	for _, b := range trimmed {
+		if b < 0x20 && b != '\t' && b != '\r' && b != '\n' {
+			return true
+		}
+	}
+	return false
 }
 
 func decodeNumeric(raw []byte) (interface{}, error) {

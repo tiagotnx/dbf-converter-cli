@@ -48,6 +48,7 @@ Bases de dados legadas do mundo ERP/contábil brasileiro ainda vivem em `.dbf` (
 - ✅ Numéricos parseados para `float64` nativamente
 - ✅ Datas normalizadas (válidas → `YYYY-MM-DD`, inválidas/vazias → `null`)
 - ✅ Campos lógicos `L` → `true` / `false` / `null`
+- ✅ Campos `C` que contêm payloads binários (hashes, registros serializados) são emitidos como **hex lossless** em vez de mojibake
 - ✅ Registros deletados transparentemente ignorados (padrão; configurável)
 - ✅ Motor de filtragem com expressões pré-compiladas ([expr-lang/expr](https://github.com/expr-lang/expr))
 - ✅ `--head N` para amostragem rápida
@@ -119,7 +120,8 @@ GOOS=darwin GOARCH=arm64 go build -o dbf-converter .
 | `--encoding`                | `-e`  | `auto`    | Codificação: `auto`, `cp850`, `windows-1252`, `iso-8859-1`, `utf-8`       |
 | `--where`                   |       | *(vazio)* | Expressão de filtro lógica (ver abaixo)                                   |
 | `--head`                    |       | `0`       | Limita processamento a N registros (`0` = sem limite)                     |
-| `--schema`                  |       | `false`   | Gera dicionário de dados em `[nome]_schema.json`                          |
+| `--schema`                  |       | `false`   | Gera dicionário de dados em `[nome]_schema.json` ao lado do input         |
+| `--schema-out`              |       | *(auto)*  | Caminho explícito para o schema (implica `--schema`; evita sujar a pasta do input) |
 | `--ignore-deleted`          |       | `true`    | Pula registros marcados como deletados no DBF                             |
 | `--table`                   |       | `data`    | Nome da tabela usado por `--format sql`                                   |
 | `--dialect`                 |       | `generic` | Dialeto SQL: `generic`, `postgres`, `mysql`, `sqlite`                     |
@@ -210,9 +212,23 @@ Exemplos:
 --where "NOME != nil && startsWith(NOME, 'João')"
 ```
 
-### Geração de schema (`--schema`)
+### Campos `C` com conteúdo binário
 
-Quando presente, grava ao lado do DBF de entrada um arquivo `[nome]_schema.json`:
+Alguns ERPs legados reaproveitam colunas `C` (character) para guardar payloads binários opacos — MD5/SHA raw, registros serializados, assinaturas digitais. Tentar decodificar esses bytes como CP850 produz mojibake (`-┌à'ÞNm©º7Ã\╔1...`) que nenhum consumidor downstream aceita.
+
+O reader detecta a presença de bytes de controle (< 0x20, exceto `\t\r\n`) e, nesse caso, emite o conteúdo como **hex lossless lowercase** (sem o padding `0x00` / espaços à direita):
+
+```
+MD5AUT98 (campo C, 49 bytes):
+  antes do fix → "-┌à'ÞNm©º7Ã\╔1`m╦ÛÖ╦¼ ²-8k╦F..."   (mojibake)
+  depois       → "2dda8527e84e6d19b8a737c75c11c931606d17cbea99cbacfffd2d386b16cb46"
+```
+
+Texto CP850 legítimo (incluindo acentuação como `João`, `ação`, `São Paulo`) **nunca** é tocado pela heurística — apenas o que contém bytes de controle crus.
+
+### Geração de schema (`--schema`, `--schema-out`)
+
+Quando `--schema` (ou `--schema-out <path>`) está presente, o conversor grava um arquivo JSON com o dicionário de dados:
 
 ```json
 {
@@ -224,6 +240,17 @@ Quando presente, grava ao lado do DBF de entrada um arquivo `[nome]_schema.json`
     { "name": "VALOR", "type": "N", "length": 10, "decimal": 2 }
   ]
 }
+```
+
+Por padrão, o arquivo é gravado ao lado do input (`clientes.dbf` → `clientes_schema.json`). Use `--schema-out /tmp/schema.json` para escolher o caminho explicitamente — útil quando o diretório do input é read-only, está versionado (`testdata/`), ou quando o schema vai para outro volume.
+
+```bash
+# Caminho derivado (default): grava ao lado do .dbf
+dbf-converter -i data/clientes.dbf -o clientes.csv --schema
+# → data/clientes_schema.json
+
+# Caminho explícito: não polui data/
+dbf-converter -i data/clientes.dbf -o clientes.csv --schema-out build/clientes.schema.json
 ```
 
 Útil para:

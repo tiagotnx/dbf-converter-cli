@@ -1,6 +1,6 @@
 ---
 name: dbf-converter
-description: Convert, inspect, filter and sample legacy dBase .dbf files (Clipper, FoxBase, FoxPro, CP850/Windows-1252) into AI-ready CSV, JSONL or SQL using the `dbf-converter` CLI. Use when the user asks to read, convert, analyze, migrate or sample a .dbf file, or when the project contains .dbf files the user wants to work with.
+description: Convert, inspect, filter and sample legacy dBase .dbf files (Clipper, FoxBase, FoxPro, CP850/Windows-1252) into AI-ready CSV, JSONL, SQL or Parquet using the `dbf-converter` CLI. Use when the user asks to read, convert, analyze, migrate or sample a .dbf file, or when the project contains .dbf files the user wants to work with.
 ---
 
 # dbf-converter — skill for working with legacy DBF files
@@ -44,15 +44,23 @@ Or `go install github.com/tiagotnx/dbf-converter-cli@latest` if the user has Go 
 
 | Flag | Short | Default | Notes |
 |---|---|---|---|
-| `--input` | `-i` | required | Path to `.dbf` |
-| `--output` | `-o` | required | Path to output file; use `/dev/stdout` to pipe |
-| `--format` | `-f` | `csv` | `csv` / `jsonl` / `sql` |
-| `--encoding` | `-e` | `cp850` | `cp850` / `windows-1252` / `iso-8859-1` |
-| `--where` | — | empty | expr-lang filter expression |
+| `--input` | `-i` | required | Path to `.dbf`; use `-` for stdin |
+| `--output` | `-o` | required | Path to output file; use `-` for stdout |
+| `--format` | `-f` | `csv` | `csv` / `jsonl` / `sql` / `parquet` |
+| `--encoding` | `-e` | `auto` | `auto` / `cp850` / `windows-1252` / `iso-8859-1` / `utf-8`. Auto uses the DBF language-driver byte (header[29]); defaults to CP850 for legacy Brazilian files |
+| `--where` | — | empty | expr-lang filter expression, compiled once |
 | `--head` | — | `0` | Max records to emit (0 = unlimited); counts **after** filter |
 | `--schema` | — | `false` | Also emit `[name]_schema.json` next to the input |
+| `--schema-out` | — | *(auto)* | Explicit path for the schema JSON (implies `--schema`; avoids polluting the input directory) |
 | `--ignore-deleted` | — | `true` | Skip records marked as deleted |
 | `--table` | — | `data` | Table name for `--format sql` |
+| `--dialect` | — | `generic` | SQL dialect: `generic` / `postgres` / `mysql` / `sqlite` |
+| `--fields` | — | *(all)* | Comma-separated subset of columns to emit (preserves the given order) |
+| `--progress` | — | `false` | Emit a progress line to stderr at most once per second |
+| `--verbose` | — | `false` | Enable `log/slog` debug output on stderr |
+| `--version` | `-v` | — | Print version and exit |
+
+Subcommands: `version` (prints version + commit + build date), `completion bash|zsh|fish|powershell` (generates shell completion scripts).
 
 ## Decision tree — what to run
 
@@ -73,15 +81,19 @@ The `_schema.json` is the single most useful artifact to reason about the file. 
 |---|---|---|
 | Open in Excel / pandas / DuckDB | `csv` | Universal, smallest |
 | Feed an LLM / load into Elasticsearch / process with `jq` | `jsonl` | One JSON per line, typed values (numeric, bool, null) |
-| Import into PostgreSQL / MySQL / SQLite | `sql` | `CREATE TABLE` + `INSERT` ready to pipe to client |
+| Import into PostgreSQL / MySQL / SQLite | `sql` | `CREATE TABLE` + `INSERT` ready to pipe to client. Use `--dialect postgres|mysql|sqlite` for native types |
+| Land in a data lake (Spark / DuckDB / Polars / pandas) | `parquet` | Columnar, compressed; preserves nulls explicitly |
 
 ### Step 3: Choose the encoding by origin
 
-- **Brazilian Clipper / dBase DOS** → `cp850` (default, covers most cases)
-- **Visual FoxPro on Windows** → `windows-1252`
-- **International Latin-1 data** → `iso-8859-1`
+`--encoding auto` (the default) reads the DBF language-driver byte (`header[29]`) and picks the best supported codepage. This Just Works for the vast majority of Brazilian legacy DBFs. Only override when auto gets it wrong:
 
-If accents look wrong (`�`, `§`, `°` appearing in names), try another encoding — the choice is not auto-detectable.
+- **Brazilian Clipper / dBase DOS** → `cp850` (fallback when header is silent — byte `0x00`)
+- **Visual FoxPro on Windows** → `windows-1252` (auto-selected for codes `0x03`, `0x57`, `0x58`, `0x87-0x89`)
+- **International Latin-1 data** → `iso-8859-1`
+- **Already UTF-8** → `utf-8` (passthrough, no transcoding)
+
+If accents look wrong (`�`, mojibake) after `auto`, try `cp850` and `windows-1252` explicitly — they differ on `ç`, `ã`, `õ` (CP850 `0x87` = `ç` vs Windows-1252 `0x87` = `‡`).
 
 ### Step 4: Filter early
 
@@ -123,22 +135,34 @@ dbf-converter -i <file>.dbf -o /tmp/sample.jsonl -f jsonl --head 100 --schema
 ### Workflow B — "Clean full export for analysis"
 
 ```bash
-dbf-converter -i <file>.dbf -o <file>.csv --schema
+dbf-converter -i <file>.dbf -o <file>.csv --schema-out build/<file>.schema.json
 # Open in DuckDB: duckdb -c "SELECT * FROM '<file>.csv' LIMIT 10"
 ```
+
+Use `--schema-out` instead of `--schema` when the input lives in a directory you don't want to pollute (e.g. a read-only `data/` folder, a versioned `testdata/`, or a shared network drive).
 
 ### Workflow C — "Load into PostgreSQL"
 
 ```bash
-dbf-converter -i clientes.dbf -o /tmp/clientes.sql -f sql --table clientes
+dbf-converter -i clientes.dbf -o /tmp/clientes.sql -f sql --dialect postgres --table clientes
 psql "$DATABASE_URL" < /tmp/clientes.sql
 ```
 
-Or stream directly without the temp file:
+Or stream directly without the temp file (using the `-` sentinel):
 
 ```bash
-dbf-converter -i clientes.dbf -o /dev/stdout -f sql --table clientes | psql "$DATABASE_URL"
+dbf-converter -i clientes.dbf -o - -f sql --dialect postgres --table clientes | psql "$DATABASE_URL"
 ```
+
+### Workflow C.2 — "Land in a data lake"
+
+```bash
+dbf-converter -i vendas.dbf -o vendas.parquet -f parquet
+# Read from Python: pd.read_parquet('vendas.parquet')
+# Or DuckDB: duckdb -c "SELECT * FROM 'vendas.parquet' LIMIT 10"
+```
+
+Parquet is columnar and compressed — ideal when the user wants to ship the file into Spark/DuckDB/Polars/Athena or keep long-term storage small.
 
 ### Workflow D — "Feed an LLM"
 
@@ -154,8 +178,9 @@ dbf-converter -i base.dbf -o sample.jsonl -f jsonl \
 Every row is "AI-ready" after conversion:
 
 - **Text fields**: trimmed of right-padding, decoded to UTF-8. `"ABC       "` becomes `"ABC"`.
-- **Numeric fields**: `float64`. Empty or malformed → `null` in JSONL/SQL, empty cell in CSV.
-- **Dates**: `"YYYY-MM-DD"` (ISO-8601) if valid; empty or garbage (`"  /  /    "`) → `null`.
+- **Binary-in-C fields**: some legacy ERPs abuse `C` columns to store MD5/SHA hashes or packed records. When the raw bytes contain control characters (`< 0x20` other than `\t\r\n`), the value is emitted as **lowercase hex** instead of mojibake — e.g. `MD5AUT98` comes out as `"2dda8527e84e6d19..."` rather than `"-┌à'ÞNm©º7..."`. Legitimate accented CP850 text (`João`, `São Paulo`) is never mis-flagged.
+- **Numeric fields**: `float64`. Empty or malformed → `null` in JSONL/SQL/Parquet, empty cell in CSV.
+- **Dates**: `"YYYY-MM-DD"` (ISO-8601) if valid; empty or garbage (`"  /  /    "`) → `null`. Parquet keeps dates as ISO strings (no INT32(DATE) conversion).
 - **Logical**: `true` / `false`; indeterminate (`?`) → `null`.
 - **Deleted records**: skipped silently by default. Use `--ignore-deleted=false` if forensic inspection of deletions is needed.
 
@@ -164,8 +189,10 @@ Every row is "AI-ready" after conversion:
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `invalid dbf header: declared length N too small` | Corrupt or non-DBF file | `file <path>`; verify it's actually a DBF |
-| `unsupported encoding: "X"` | Typo or unsupported codepage | Use one of `cp850`, `windows-1252`, `iso-8859-1` |
-| Accents look garbled (`ç` appears as `ž`) | Wrong `--encoding` | Try the other two; `cp850` and `windows-1252` differ for `ç`, `ã`, `õ` |
+| `unsupported encoding: "X"` | Typo or unsupported codepage | Use one of `auto`, `cp850`, `windows-1252`, `iso-8859-1`, `utf-8` |
+| Accents look garbled (`ç` appears as `ž`) | Wrong `--encoding` (auto picked the wrong one) | Force `cp850` or `windows-1252` explicitly — they differ for `ç`, `ã`, `õ` |
+| Column contains garbled text like `-┌à'ÞNm©º7...` | Binary payload (hash/blob) in a `C` field; auto-handled now | Re-run — the tool now emits hex lossless. If you see garbled text, the binary was detected as plain text — open an issue with the field in hex |
+| Schema file polluting a read-only or versioned directory | `--schema` grava ao lado do input | Use `--schema-out <explicit-path>` |
 | Filter compiles but matches nothing | Field name case mismatch | DBF headers are usually uppercase; `status` ≠ `STATUS` |
 | Filter errors with `cannot compare nil` | Empty numeric/date cells in rows | Guard with `FIELD != nil && FIELD > 0` |
 | SQL output rejected at import | Table/column collision with reserved word | Use `--table "my_clientes"`; quote column names in your DDL |

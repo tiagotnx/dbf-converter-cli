@@ -101,13 +101,13 @@ go install github.com/tiagotnx/dbf-converter-cli@latest
 
 Both variants agree on the same core knowledge:
 
-- **Flag surface** — `-i`, `-o`, `-f`, `-e`, `--where`, `--head`, `--schema`, `--ignore-deleted`, `--table`
-- **Format decision tree** — CSV for spreadsheets/DuckDB, JSONL for LLMs/pipelines, SQL for DB ingestion
-- **Encoding defaults** — CP850 for Brazilian legacy data, Windows-1252 for VFP, ISO-8859-1 for Latin-1
+- **Flag surface** — `-i`, `-o`, `-f`, `-e`, `--where`, `--head`, `--schema`, `--schema-out`, `--ignore-deleted`, `--table`, `--dialect`, `--fields`, `--progress`, `--verbose`, `--version`; plus `version` / `completion` subcommands
+- **Format decision tree** — CSV for spreadsheets/DuckDB, JSONL for LLMs/pipelines, SQL (with a dialect) for DB ingestion, Parquet for data lakes
+- **Encoding defaults** — `auto` (reads the DBF language-driver byte) with CP850 / Windows-1252 / ISO-8859-1 / UTF-8 as explicit overrides
 - **Filter language** — expr-lang syntax, null guards (`FIELD != nil && ...`), string helpers
-- **Output semantics** — trimmed text, float64 numerics, ISO-8601 dates, explicit nulls, skipped deletes
-- **Canonical workflows** — "explore this DBF", "clean export", "load into Postgres", "sample for an LLM"
-- **Troubleshooting** — garbled accents, filter-matches-nothing, corrupt headers, reserved words
+- **Output semantics** — trimmed text, float64 numerics, ISO-8601 dates, explicit nulls, skipped deletes, lossless hex fallback for binary payloads in `C` fields
+- **Canonical workflows** — "explore this DBF", "clean export", "load into Postgres", "sample for an LLM", "land in a data lake"
+- **Troubleshooting** — garbled accents (encoding), filter-matches-nothing (case), corrupt headers (padding), reserved words (SQL), binary-looking columns (hex auto-fallback)
 
 The Claude SKILL.md is the deeper reference; the Copilot `.instructions.md` is a compressed version tuned for inline completions, and the `.prompt.md` is the step-by-step interactive variant.
 

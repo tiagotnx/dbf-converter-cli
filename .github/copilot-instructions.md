@@ -4,10 +4,10 @@ Contexto compacto para sugestões inline no **dbf-converter-cli**. Para contexto
 
 ## Stack
 - **Go 1.21+** (testado com 1.25). Sem CGO.
-- Dependências: `github.com/expr-lang/expr`, `github.com/spf13/pflag`, `github.com/stretchr/testify`, `golang.org/x/text`.
+- Dependências: `github.com/expr-lang/expr`, `github.com/spf13/cobra` (+ `pflag` transitivo), `github.com/stretchr/testify`, `golang.org/x/text`, `github.com/parquet-go/parquet-go`.
 
 ## O que é
-Conversor CLI de arquivos DBF (dBase) legados (CP850 / Windows-1252 / ISO-8859-1) para CSV / JSONL / SQL em UTF-8, com saída **AI-Ready** e processamento **streaming** (nunca carrega tudo em RAM).
+Conversor CLI de arquivos DBF (dBase) legados (CP850 / Windows-1252 / ISO-8859-1 / UTF-8) para CSV / JSONL / SQL / Parquet em UTF-8, com saída **AI-Ready** e processamento **streaming** (nunca carrega tudo em RAM).
 
 ## Princípios inegociáveis (não sugira código que os viole)
 
@@ -15,6 +15,7 @@ Conversor CLI de arquivos DBF (dBase) legados (CP850 / Windows-1252 / ISO-8859-1
 2. **TDD Red-Green-Refactor.** Toda nova funcionalidade começa pelo teste no `*_test.go` correspondente.
 3. **AI-Ready output:**
    - Texto: `strings.TrimSpace` + decode para UTF-8.
+   - Texto binário em campos `C` (bytes `< 0x20` fora de `\t\r\n`) → hex lossless via `encoding/hex`, sem o padding `0x00`/espaço.
    - Numérico vazio/inválido → `nil` (não `0`, não `""`).
    - Data válida → `"YYYY-MM-DD"`; vazia/inválida → `nil`.
    - Lógico indeterminado (`?`) → `nil`.
@@ -41,18 +42,35 @@ Conversor CLI de arquivos DBF (dBase) legados (CP850 / Windows-1252 / ISO-8859-1
 ## Arquitetura e regras de camadas
 
 ```
-main.go              → abre arquivos e chama converter
-internal/cli/        → argv → Options (DTO)
-internal/converter/  → orquestra read→filter→export
-internal/dbf/        → parser DBF (base, sem imports internos)
+main.go              → abre arquivos, slog, progresso; chama converter
+internal/cli/        → Cobra root + `version`/`completion` subcomandos; argv → Options DTO
+internal/converter/  → orquestra read→filter→export; projeta --fields; emite progresso
+internal/dbf/        → parser DBF (base, sem imports internos) + auto-detect de encoding
 internal/filter/     → wrapper expr-lang (compile-once)
-internal/exporter/   → CSV / JSONL / SQL (interface Exporter)
+internal/exporter/   → CSV / JSONL / SQL / Parquet (interface Exporter)
+pkg/dbf/             → API pública (type alias para internal/dbf)
+pkg/converter/       → API pública (type alias para internal/converter)
 ```
 
 - `dbf` e `filter` **não** importam nada interno.
 - `exporter` **não** importa `dbf`; usa `exporter.Field` (DTO próprio).
 - `converter` faz o mapeamento `dbf.Field → exporter.Field`.
 - Só `main.go` toca o filesystem.
+
+## Flags principais (referência rápida)
+
+- `-i`/`-o` obrigatórios. Use `-` para stdin/stdout.
+- `-f csv|jsonl|sql|parquet` (default `csv`).
+- `-e auto|cp850|windows-1252|iso-8859-1|utf-8` (default `auto`: detecta do byte 29 do header).
+- `--dialect generic|postgres|mysql|sqlite` (só com `-f sql`).
+- `--fields A,B,C` projeta colunas (preserva a ordem do usuário).
+- `--where "<expr>"` filtro expr-lang compilado uma vez.
+- `--head N` (conta pós-filtro).
+- `--schema` grava `[input]_schema.json` ao lado do input.
+- `--schema-out <path>` caminho explícito (implica `--schema`; útil para não sujar `testdata/`).
+- `--progress` barra em stderr (≤1 tick/s).
+- `--verbose` ativa `slog.Debug`.
+- Subcomandos: `version` (detalhado), `completion bash|zsh|fish|powershell`.
 
 ## Exporter: interface única
 
@@ -68,7 +86,7 @@ Para adicionar um novo formato, implemente essa interface e registre em `convert
 ## Parsing de DBF: valores retornados
 
 Reader retorna `map[string]interface{}` onde valores são exclusivamente:
-- `string` (campos C/M, já trimmed e em UTF-8)
+- `string` (campos C/M, já trimmed e em UTF-8; hex lowercase se o conteúdo útil tiver bytes de controle)
 - `float64` (campos N/F/I; `nil` se vazio)
 - `bool` (campos L; `nil` se indeterminado)
 - `string` ISO-8601 `"YYYY-MM-DD"` (campos D; `nil` se vazio/inválido)

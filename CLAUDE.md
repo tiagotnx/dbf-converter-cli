@@ -36,6 +36,7 @@ O bug real do `movpro01.dbf` (header com byte de padding) foi encontrado e corri
 Toda decodificação que pudesse ficar à meia-boca é responsabilidade do parser, não do consumidor:
 
 - Texto: `TrimSpace` + decode UTF-8, sempre.
+- Texto com bytes binários (qualquer byte `< 0x20` fora de `\t\r\n` no conteúdo útil, depois de stripar padding `0x00`/espaço): cai para **hex lowercase lossless** via `encoding/hex`. Evita mojibake em colunas `C` que guardam MD5/SHA/payloads serializados. Texto CP850 legítimo (com bytes altos 0xA0-0xFF) **não** dispara a heurística.
 - Numérico vazio / inválido → `nil` (não `0`, não `""`).
 - Data vazia / malformada (`"  /  /    "`) → `nil`.
 - Data válida → `"YYYY-MM-DD"` (ISO-8601), nunca `20250115` nem `15/01/2025`.
@@ -64,7 +65,7 @@ pkg/converter/             # API pública (type alias para internal/converter)
 testdata/gen_fixture.go    # gerador de fixture sintético (//go:build ignore)
 ```
 
-**Sinalizadores do CLI** (atualizados): `-i`/`-o` (obrigatórios, `-` = stdin/stdout), `-f` (csv|jsonl|sql|parquet), `-e` (auto padrão | cp850 | windows-1252 | iso-8859-1 | utf-8), `--where`, `--head`, `--schema`, `--ignore-deleted`, `--table`, `--dialect` (generic|postgres|mysql|sqlite), `--fields`, `--progress`, `--verbose`, `--version`. Subcomandos: `version` (detalhado) e `completion` (shell scripts).
+**Sinalizadores do CLI** (atualizados): `-i`/`-o` (obrigatórios, `-` = stdin/stdout), `-f` (csv|jsonl|sql|parquet), `-e` (auto padrão | cp850 | windows-1252 | iso-8859-1 | utf-8), `--where`, `--head`, `--schema`, `--schema-out <path>` (caminho explícito do schema; implica `--schema`), `--ignore-deleted`, `--table`, `--dialect` (generic|postgres|mysql|sqlite), `--fields`, `--progress`, `--verbose`, `--version`. Subcomandos: `version` (detalhado) e `completion` (shell scripts).
 
 **Regras de camadas** (estritas, checadas em PR):
 

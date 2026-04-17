@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -85,7 +86,10 @@ func TestParseFlags_InvalidDialect(t *testing.T) {
 func TestSchemaPath(t *testing.T) {
 	assert.Equal(t, "clientes_schema.json", SchemaPath("clientes.dbf"))
 	assert.Equal(t, "noext_schema.json", SchemaPath("noext"))
-	assert.Equal(t, "/path/to/clientes_schema.json", SchemaPath("/path/to/clientes.dbf"))
+	// SchemaPath uses filepath.Join, which emits OS-native separators — on
+	// Windows this is "\" not "/". Build the expected value the same way so
+	// the test is portable across GOOS.
+	assert.Equal(t, filepath.Join("/path/to", "clientes_schema.json"), SchemaPath("/path/to/clientes.dbf"))
 	assert.Equal(t, "stdin_schema.json", SchemaPath("-"))
 }
 

@@ -87,44 +87,11 @@ release:
   prerelease: auto
   name_template: '{{ .ProjectName }} v{{ .Version }}'
 
-dockers:
-  - image_templates:
-      - 'ghcr.io/tiagotnx/dbf-converter:{{ .Version }}'
-      - 'ghcr.io/tiagotnx/dbf-converter:latest'
-    dockerfile: Dockerfile
-    use: buildx
-    build_flag_templates:
-      - '--platform=linux/amd64'
-      - '--label=org.opencontainers.image.title={{ .ProjectName }}'
-      - '--label=org.opencontainers.image.version={{ .Version }}'
-      - '--label=org.opencontainers.image.revision={{ .FullCommit }}'
-      - '--label=org.opencontainers.image.source=https://github.com/tiagotnx/dbf-converter-cli'
-      - '--label=org.opencontainers.image.licenses=MIT'
-    skip_push: auto
-
-brews:
-  - name: dbf-converter
-    ids:
-      - dbf-converter
-    repository:
-      owner: tiagotnx
-      name: homebrew-tap
-    directory: Formula
-    homepage: 'https://github.com/tiagotnx/dbf-converter-cli'
-    description: 'Streaming converter for legacy dBase .dbf files into CSV/JSONL/SQL/Parquet.'
-    license: 'MIT'
-    test: |
-      system "#{bin}/dbf-converter", "--version"
-    install: |
-      bin.install "dbf-converter"
-
-scoops:
-  - name: dbf-converter
-    ids:
-      - dbf-converter
-    repository:
-      owner: tiagotnx
-      name: scoop-bucket
-    homepage: 'https://github.com/tiagotnx/dbf-converter-cli'
-    description: 'Streaming converter for legacy dBase .dbf files into CSV/JSONL/SQL/Parquet.'
-    license: 'MIT'
+# Optional distribution channels — enable once the prerequisite repos exist.
+#
+#   * Docker (ghcr.io/tiagotnx/dbf-converter): needs Dockerfile.release that
+#     copies the prebuilt binary instead of recompiling from source.
+#   * Homebrew tap: needs the repo tiagotnx/homebrew-tap to be created.
+#   * Scoop bucket: needs the repo tiagotnx/scoop-bucket to be created.
+#
+# See https://goreleaser.com/customization/docker/, /homebrew_casks/, /scoop/.

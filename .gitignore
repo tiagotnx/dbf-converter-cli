@@ -1,0 +1,24 @@
+# Compiled binaries
+/dbf-converter
+/dbf-converter.exe
+*.exe
+
+# Go build / test artifacts
+*.test
+*.out
+coverage.*
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+
+# Agent / local tooling config
+.claude/
+
+# Local DBF fixtures and their generated outputs.
+# testdata/gen_fixture.go is versioned; the binaries it produces are not.
+testdata/*.dbf
+testdata/*_schema.json
+testdata/sample.*

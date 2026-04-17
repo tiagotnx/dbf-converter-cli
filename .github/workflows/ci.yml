@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+          cache: true
+
+      - name: Verify modules tidy
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Run tests with race detector
+        run: go test -race -count=1 ./...
+
+      - name: Run tests with coverage
+        if: matrix.os == 'ubuntu-latest'
+        run: go test -covermode=atomic -coverprofile=coverage.out ./...
+
+      - name: Upload coverage artifact
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
+          retention-days: 7
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+          cache: true
+      - name: gofmt check
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "Files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+      - name: staticcheck
+        uses: dominikh/staticcheck-action@v1
+        with:
+          version: latest
+          install-go: false
+
+  build:
+    name: Build smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+          cache: true
+      - name: Build binary
+        run: go build -v -o /tmp/dbf-converter .
+      - name: Generate fixture and round-trip
+        run: |
+          go run testdata/gen_fixture.go /tmp/sample.dbf
+          /tmp/dbf-converter -i /tmp/sample.dbf -o /tmp/sample.csv
+          test -s /tmp/sample.csv

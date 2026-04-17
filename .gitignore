@@ -8,6 +8,9 @@
 *.out
 coverage.*
 
+# goreleaser output directory
+/dist/
+
 # Editor / OS
 .vscode/
 .idea/

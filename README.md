@@ -252,6 +252,28 @@ Descarta registros sem data ou com quantidade zero antes de chegar ao banco.
 
 ---
 
+## Usando com agentes de IA (Claude Code / Copilot)
+
+Este repo publica uma **skill plug-and-play** em [`skills/dbf-converter/`](skills/dbf-converter/) que ensina agentes de IA a usarem o CLI corretamente no seu projeto. Ela cobre detecção de `.dbf`, inspeção de schema antes de conversão, escolha de formato, construção de filtros `--where` com sintaxe correta e troubleshooting de acentuação/encoding.
+
+### Claude Code
+```bash
+mkdir -p .claude/skills/dbf-converter
+curl -sSL -o .claude/skills/dbf-converter/SKILL.md \
+  https://raw.githubusercontent.com/tiagotnx/dbf-converter-cli/main/skills/dbf-converter/claude/dbf-converter/SKILL.md
+```
+
+### GitHub Copilot
+```bash
+mkdir -p .github/instructions .github/prompts
+curl -sSL -o .github/instructions/dbf-converter.instructions.md \
+  https://raw.githubusercontent.com/tiagotnx/dbf-converter-cli/main/skills/dbf-converter/copilot/dbf-converter.instructions.md
+curl -sSL -o .github/prompts/dbf-convert.prompt.md \
+  https://raw.githubusercontent.com/tiagotnx/dbf-converter-cli/main/skills/dbf-converter/copilot/dbf-convert.prompt.md
+```
+
+Veja [`skills/dbf-converter/README.md`](skills/dbf-converter/README.md) para detalhes.
+
 ## Arquitetura
 
 ```

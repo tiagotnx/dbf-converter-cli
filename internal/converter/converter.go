@@ -6,28 +6,35 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"path/filepath"
+	"time"
 
 	"dbf-converter-cli/internal/dbf"
 	"dbf-converter-cli/internal/exporter"
 	"dbf-converter-cli/internal/filter"
 )
 
-// Config is the complete input to Convert. Only Input, Output, Format, and Encoding
-// are required; the rest default to their zero-value semantics.
+// Config is the complete input to Convert. Only Input, Output, and Format
+// are strictly required; everything else has a sensible default.
 type Config struct {
 	Input         io.Reader
 	Output        io.Writer
-	Format        string // "csv" | "jsonl" | "sql"
-	Encoding      string // "cp850" | "windows-1252" | "iso-8859-1"
+	Format        string // "csv" | "jsonl" | "sql" | "parquet"
+	Encoding      string // "auto" | "cp850" | "windows-1252" | "iso-8859-1" | "utf-8"
 	Where         string // optional expr-lang filter
 	Head          int    // 0 = unlimited
 	IgnoreDeleted bool
-	TableName     string    // used for --format sql (default "data")
-	SchemaOut     io.Writer // optional: when non-nil, schema JSON is written here
+	TableName     string    // --format sql (default "data")
+	Dialect       string    // --dialect (generic|postgres|mysql|sqlite), default "generic"
+	Fields        []string  // projection — empty = all fields, in DBF order
+	Progress      bool      // emit progress lines to ProgressOut
+	ProgressOut   io.Writer // where progress lines go (typically os.Stderr)
+	InputPath     string    // label used in progress output; optional
+	SchemaOut     io.Writer // optional — non-nil = emit data dictionary JSON
 }
 
-// Convert runs the full streaming pipeline. Records are never materialized as a
-// slice — each row moves reader → filter → exporter → output in order.
+// Convert runs the full streaming pipeline. Records are never materialized as
+// a slice — each row moves reader → filter → exporter → output in order.
 func Convert(cfg Config) error {
 	if cfg.Input == nil {
 		return fmt.Errorf("converter: Input is required")
@@ -44,6 +51,9 @@ func Convert(cfg Config) error {
 	if cfg.TableName == "" {
 		cfg.TableName = "data"
 	}
+	if cfg.Dialect == "" {
+		cfg.Dialect = "generic"
+	}
 
 	reader, err := dbf.NewReader(cfg.Input, cfg.Encoding)
 	if err != nil {
@@ -51,13 +61,18 @@ func Convert(cfg Config) error {
 	}
 	reader.IgnoreDeleted = cfg.IgnoreDeleted
 
-	exp, err := buildExporter(cfg, reader.Fields())
+	emittedFields, err := resolveFields(reader.Fields(), cfg.Fields)
+	if err != nil {
+		return err
+	}
+
+	exp, err := buildExporter(cfg, emittedFields)
 	if err != nil {
 		return err
 	}
 
 	if cfg.SchemaOut != nil {
-		if err := writeSchema(cfg.SchemaOut, reader.Fields(), reader.NumRecords()); err != nil {
+		if err := writeSchema(cfg.SchemaOut, emittedFields, reader.NumRecords()); err != nil {
 			return fmt.Errorf("writing schema: %w", err)
 		}
 	}
@@ -66,6 +81,8 @@ func Convert(cfg Config) error {
 	if err != nil {
 		return err
 	}
+
+	prog := newProgress(cfg, reader.NumRecords())
 
 	emitted := 0
 	for {
@@ -83,20 +100,69 @@ func Convert(cfg Config) error {
 				return err
 			}
 			if !match {
+				prog.tick(emitted)
 				continue
 			}
 		}
 
-		if err := exp.Write(rec.Values); err != nil {
+		row := rec.Values
+		if len(cfg.Fields) > 0 {
+			row = projectRow(rec.Values, cfg.Fields)
+		}
+
+		if err := exp.Write(row); err != nil {
 			return fmt.Errorf("writing record: %w", err)
 		}
 		emitted++
+		prog.tick(emitted)
 		if cfg.Head > 0 && emitted >= cfg.Head {
 			break
 		}
 	}
+	prog.finish(emitted)
 
 	return exp.Close()
+}
+
+// resolveFields optionally narrows the field list to the --fields projection,
+// preserving the user-supplied order and erroring on unknown names.
+func resolveFields(all []dbf.Field, projection []string) ([]dbf.Field, error) {
+	if len(projection) == 0 {
+		return all, nil
+	}
+	byName := make(map[string]dbf.Field, len(all))
+	for _, f := range all {
+		byName[f.Name] = f
+	}
+	out := make([]dbf.Field, 0, len(projection))
+	for _, name := range projection {
+		f, ok := byName[name]
+		if !ok {
+			return nil, fmt.Errorf("--fields: unknown column %q (available: %s)", name, fieldNames(all))
+		}
+		out = append(out, f)
+	}
+	return out, nil
+}
+
+func fieldNames(fields []dbf.Field) string {
+	names := make([]byte, 0, len(fields)*8)
+	for i, f := range fields {
+		if i > 0 {
+			names = append(names, ',', ' ')
+		}
+		names = append(names, f.Name...)
+	}
+	return string(names)
+}
+
+// projectRow returns a copy of row restricted to the requested fields.
+func projectRow(row map[string]interface{}, fields []string) map[string]interface{} {
+	out := make(map[string]interface{}, len(fields))
+	for _, f := range fields {
+		out[f] = row[f]
+	}
+	return out
 }
 
 func buildExporter(cfg Config, dbfFields []dbf.Field) (exporter.Exporter, error) {
@@ -107,9 +173,11 @@ func buildExporter(cfg Config, dbfFields []dbf.Field) (exporter.Exporter, error)
 	case "jsonl":
 		return exporter.NewJSONL(cfg.Output, fields)
 	case "sql":
-		return exporter.NewSQL(cfg.Output, fields, cfg.TableName)
+		return exporter.NewSQLWithDialect(cfg.Output, fields, cfg.TableName, cfg.Dialect)
+	case "parquet":
+		return nil, fmt.Errorf("parquet output is not yet implemented in this build; use csv, jsonl, or sql")
 	default:
-		return nil, fmt.Errorf("unsupported format %q (supported: csv, jsonl, sql)", cfg.Format)
+		return nil, fmt.Errorf("unsupported format %q (supported: csv, jsonl, sql, parquet)", cfg.Format)
 	}
 }
 
@@ -147,4 +215,65 @@ func writeSchema(w io.Writer, fields []dbf.Field, total uint32) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(payload)
+}
+
+// progress emits a single-line stderr update at most once per second so that
+// long conversions show liveness without spamming the terminal.
+type progress struct {
+	enabled  bool
+	out      io.Writer
+	label    string
+	total    uint32
+	lastTick time.Time
+	start    time.Time
+}
+
+func newProgress(cfg Config, total uint32) *progress {
+	if !cfg.Progress || cfg.ProgressOut == nil {
+		return &progress{}
+	}
+	label := cfg.InputPath
+	if label == "" || label == "-" {
+		label = "stdin"
+	} else {
+		label = filepath.Base(label)
+	}
+	return &progress{
+		enabled: true,
+		out:     cfg.ProgressOut,
+		label:   label,
+		total:   total,
+		start:   time.Now(),
+	}
+}
+
+func (p *progress) tick(done int) {
+	if !p.enabled {
+		return
+	}
+	now := time.Now()
+	if now.Sub(p.lastTick) < time.Second {
+		return
+	}
+	p.lastTick = now
+	p.write(done, now)
+}
+
+func (p *progress) finish(done int) {
+	if !p.enabled {
+		return
+	}
+	p.write(done, time.Now())
+	fmt.Fprintln(p.out)
+}
+
+func (p *progress) write(done int, now time.Time) {
+	elapsed := now.Sub(p.start)
+	rate := float64(done) / elapsed.Seconds()
+	if p.total > 0 {
+		pct := 100 * float64(done) / float64(p.total)
+		fmt.Fprintf(p.out, "\r%s: %d/%d (%.1f%%) @ %.0f rec/s", p.label, done, p.total, pct, rate)
+	} else {
+		fmt.Fprintf(p.out, "\r%s: %d records @ %.0f rec/s", p.label, done, rate)
+	}
 }

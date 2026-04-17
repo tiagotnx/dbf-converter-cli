@@ -173,11 +173,11 @@ func TestConvert_IgnoreDeleted(t *testing.T) {
 
 	var out bytes.Buffer
 	err := Convert(Config{
-		Input:          bytes.NewReader(dbfBytes),
-		Output:         &out,
-		Format:         "csv",
-		Encoding:       "cp850",
-		IgnoreDeleted:  true,
+		Input:         bytes.NewReader(dbfBytes),
+		Output:        &out,
+		Format:        "csv",
+		Encoding:      "cp850",
+		IgnoreDeleted: true,
 	})
 	require.NoError(t, err)
 
@@ -190,11 +190,11 @@ func TestConvert_SchemaGeneration(t *testing.T) {
 	var out, schemaBuf bytes.Buffer
 
 	err := Convert(Config{
-		Input:      bytes.NewReader(dbfBytes),
-		Output:     &out,
-		Format:     "csv",
-		Encoding:   "cp850",
-		SchemaOut:  &schemaBuf,
+		Input:     bytes.NewReader(dbfBytes),
+		Output:    &out,
+		Format:    "csv",
+		Encoding:  "cp850",
+		SchemaOut: &schemaBuf,
 	})
 	require.NoError(t, err)
 

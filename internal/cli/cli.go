@@ -33,6 +33,7 @@ type Options struct {
 	Where         string
 	Head          int
 	Schema        bool
+	SchemaOut     string // explicit override for the companion schema path
 	IgnoreDeleted bool
 	TableName     string
 	Dialect       string   // sql dialect: generic | postgres | mysql | sqlite
@@ -88,7 +89,8 @@ skipped by default. Use '-' as the input/output path to pipe via stdin/stdout.`,
 	flags.StringVarP(&opts.Encoding, "encoding", "e", "auto", "Source encoding: auto | cp850 | windows-1252 | iso-8859-1 | utf-8")
 	flags.StringVar(&opts.Where, "where", "", "Optional expression filter, e.g. \"STATUS == 'A' && VALOR >= 150\"")
 	flags.IntVar(&opts.Head, "head", 0, "Process at most N records (0 = unlimited, counted post-filter)")
-	flags.BoolVar(&opts.Schema, "schema", false, "Also emit a [name]_schema.json data dictionary")
+	flags.BoolVar(&opts.Schema, "schema", false, "Also emit a [name]_schema.json data dictionary (defaults to input's directory)")
+	flags.StringVar(&opts.SchemaOut, "schema-out", "", "Write the schema to this explicit path (implies --schema; avoids polluting the input directory)")
 	flags.BoolVar(&opts.IgnoreDeleted, "ignore-deleted", true, "Skip records marked as deleted in the DBF")
 	flags.StringVar(&opts.TableName, "table", "data", "Table name used by --format sql")
 	flags.StringVar(&opts.Dialect, "dialect", "generic", "SQL dialect when --format=sql: generic | postgres | mysql | sqlite")
@@ -147,6 +149,9 @@ func validateOptions(opts *Options) error {
 	}
 	if opts.Head < 0 {
 		return fmt.Errorf("--head must be >= 0, got %d", opts.Head)
+	}
+	if opts.SchemaOut != "" {
+		opts.Schema = true
 	}
 	return nil
 }

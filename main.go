@@ -64,7 +64,11 @@ func runConvert(opts *cli.Options) error {
 	}
 
 	if opts.Schema {
-		schemaFile, err := os.Create(cli.SchemaPath(opts.Input))
+		schemaPath := opts.SchemaOut
+		if schemaPath == "" {
+			schemaPath = cli.SchemaPath(opts.Input)
+		}
+		schemaFile, err := os.Create(schemaPath)
 		if err != nil {
 			return fmt.Errorf("creating schema file: %w", err)
 		}

@@ -89,6 +89,28 @@ func TestSchemaPath(t *testing.T) {
 	assert.Equal(t, "stdin_schema.json", SchemaPath("-"))
 }
 
+func TestParseFlags_SchemaOutExplicitPath(t *testing.T) {
+	opts, err := ParseFlags([]string{
+		"-i", "in.dbf", "-o", "out.csv",
+		"--schema-out", "/tmp/custom_schema.json",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "/tmp/custom_schema.json", opts.SchemaOut)
+	assert.True(t, opts.Schema, "--schema-out must implicitly enable schema emission")
+}
+
+func TestParseFlags_SchemaOutOverridesDerivedPath(t *testing.T) {
+	// When both --schema (derived name) and --schema-out (explicit) are set,
+	// the explicit path wins: avoids accidental clobber of the derived location.
+	opts, err := ParseFlags([]string{
+		"-i", "testdata/arqpar.dbf", "-o", "out.csv",
+		"--schema", "--schema-out", "/var/tmp/explicit.json",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "/var/tmp/explicit.json", opts.SchemaOut)
+	assert.True(t, opts.Schema)
+}
+
 func TestVersionSubcommand(t *testing.T) {
 	info := BuildInfo{Version: "1.2.3", Commit: "abc", Date: "2025-01-01"}
 	cmd := NewRootCommand(info, func(*Options) error { return nil })

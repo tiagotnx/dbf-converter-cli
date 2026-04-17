@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/parquet-go/parquet-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -226,4 +227,25 @@ func TestConvert_SQLWithTableName(t *testing.T) {
 	s := out.String()
 	assert.Contains(t, s, "CREATE TABLE IF NOT EXISTS clientes")
 	assert.Contains(t, s, "INSERT INTO clientes")
+}
+
+func TestConvert_ParquetEndToEnd(t *testing.T) {
+	dbfBytes := sampleDBF(t)
+	var out bytes.Buffer
+
+	err := Convert(Config{
+		Input:    bytes.NewReader(dbfBytes),
+		Output:   &out,
+		Format:   "parquet",
+		Encoding: "cp850",
+	})
+	require.NoError(t, err)
+
+	// Verify the result is a structurally valid Parquet file containing the
+	// 4 sample records with the expected schema.
+	raw := bytes.NewReader(out.Bytes())
+	file, err := parquet.OpenFile(raw, int64(out.Len()))
+	require.NoError(t, err)
+	assert.Equal(t, int64(4), file.NumRows())
+	assert.Len(t, file.Schema().Columns(), 3, "ID, STATUS, VALOR")
 }

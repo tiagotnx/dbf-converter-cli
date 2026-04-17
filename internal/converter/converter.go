@@ -175,7 +175,7 @@ func buildExporter(cfg Config, dbfFields []dbf.Field) (exporter.Exporter, error)
 	case "sql":
 		return exporter.NewSQLWithDialect(cfg.Output, fields, cfg.TableName, cfg.Dialect)
 	case "parquet":
-		return nil, fmt.Errorf("parquet output is not yet implemented in this build; use csv, jsonl, or sql")
+		return exporter.NewParquet(cfg.Output, fields)
 	default:
 		return nil, fmt.Errorf("unsupported format %q (supported: csv, jsonl, sql, parquet)", cfg.Format)
 	}

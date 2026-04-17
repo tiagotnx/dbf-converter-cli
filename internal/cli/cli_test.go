@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -18,11 +19,15 @@ func TestParseFlags_Defaults(t *testing.T) {
 	assert.Equal(t, "in.dbf", opts.Input)
 	assert.Equal(t, "out.csv", opts.Output)
 	assert.Equal(t, "csv", opts.Format)
-	assert.Equal(t, "cp850", opts.Encoding)
+	assert.Equal(t, "auto", opts.Encoding, "auto-detect should be the default")
 	assert.True(t, opts.IgnoreDeleted, "--ignore-deleted must default to true per spec")
 	assert.False(t, opts.Schema)
 	assert.Equal(t, 0, opts.Head)
 	assert.Equal(t, "", opts.Where)
+	assert.Equal(t, "generic", opts.Dialect)
+	assert.Empty(t, opts.Fields)
+	assert.False(t, opts.Progress)
+	assert.False(t, opts.Verbose)
 }
 
 func TestParseFlags_AllOptions(t *testing.T) {
@@ -36,6 +41,10 @@ func TestParseFlags_AllOptions(t *testing.T) {
 		"--schema",
 		"--ignore-deleted=false",
 		"--table", "clientes",
+		"--dialect", "postgres",
+		"--fields", "ID,NOME,VALOR",
+		"--progress",
+		"--verbose",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "jsonl", opts.Format)
@@ -45,6 +54,17 @@ func TestParseFlags_AllOptions(t *testing.T) {
 	assert.True(t, opts.Schema)
 	assert.False(t, opts.IgnoreDeleted)
 	assert.Equal(t, "clientes", opts.TableName)
+	assert.Equal(t, "postgres", opts.Dialect)
+	assert.Equal(t, []string{"ID", "NOME", "VALOR"}, opts.Fields)
+	assert.True(t, opts.Progress)
+	assert.True(t, opts.Verbose)
+}
+
+func TestParseFlags_StdinStdoutSentinels(t *testing.T) {
+	opts, err := ParseFlags([]string{"-i", "-", "-o", "-"})
+	require.NoError(t, err)
+	assert.Equal(t, "-", opts.Input)
+	assert.Equal(t, "-", opts.Output)
 }
 
 func TestParseFlags_InvalidFormat(t *testing.T) {
@@ -57,8 +77,38 @@ func TestParseFlags_InvalidEncoding(t *testing.T) {
 	assert.Error(t, err, "unsupported encoding must be rejected")
 }
 
+func TestParseFlags_InvalidDialect(t *testing.T) {
+	_, err := ParseFlags([]string{"-i", "in.dbf", "-o", "out.sql", "-f", "sql", "--dialect", "oracle"})
+	assert.Error(t, err, "unsupported dialect must be rejected")
+}
+
 func TestSchemaPath(t *testing.T) {
 	assert.Equal(t, "clientes_schema.json", SchemaPath("clientes.dbf"))
 	assert.Equal(t, "noext_schema.json", SchemaPath("noext"))
 	assert.Equal(t, "/path/to/clientes_schema.json", SchemaPath("/path/to/clientes.dbf"))
+	assert.Equal(t, "stdin_schema.json", SchemaPath("-"))
+}
+
+func TestVersionSubcommand(t *testing.T) {
+	info := BuildInfo{Version: "1.2.3", Commit: "abc", Date: "2025-01-01"}
+	cmd := NewRootCommand(info, func(*Options) error { return nil })
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stdout)
+	cmd.SetArgs([]string{"version"})
+	require.NoError(t, cmd.Execute())
+	assert.Contains(t, stdout.String(), "1.2.3")
+	assert.Contains(t, stdout.String(), "commit: abc")
+	assert.Contains(t, stdout.String(), "built:  2025-01-01")
+}
+
+func TestVersionFlag(t *testing.T) {
+	info := BuildInfo{Version: "9.9.9"}
+	cmd := NewRootCommand(info, func(*Options) error { return nil })
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stdout)
+	cmd.SetArgs([]string{"--version"})
+	require.NoError(t, cmd.Execute())
+	assert.Contains(t, stdout.String(), "9.9.9")
 }

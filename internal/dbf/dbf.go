@@ -38,28 +38,34 @@ type Record struct {
 
 // Reader streams records out of a .dbf file.
 type Reader struct {
-	src          io.Reader
-	decoder      *encoding.Decoder
-	fields       []Field
-	numRecords   uint32
-	recordLen    int
-	readRecords  uint32
-	buf          []byte
+	src           io.Reader
+	decoder       *encoding.Decoder
+	fields        []Field
+	numRecords    uint32
+	recordLen     int
+	readRecords   uint32
+	buf           []byte
 	IgnoreDeleted bool
 }
 
 // NewReader parses the DBF header and prepares the stream for record iteration.
-// encodingName selects the codepage used to decode character fields: cp850, windows-1252, iso-8859-1.
+// encodingName selects the codepage used to decode character fields. "auto"
+// uses byte 29 (the language-driver code) of the header to pick the codepage;
+// supported names are cp850, windows-1252, iso-8859-1, utf-8.
 func NewReader(src io.Reader, encodingName string) (*Reader, error) {
-	dec, err := resolveDecoder(encodingName)
-	if err != nil {
-		return nil, err
-	}
-
 	// DBF header is 32 bytes.
 	header := make([]byte, 32)
 	if _, err := io.ReadFull(src, header); err != nil {
 		return nil, fmt.Errorf("reading dbf header: %w", err)
+	}
+
+	resolvedName := encodingName
+	if strings.EqualFold(encodingName, "auto") || encodingName == "" {
+		resolvedName = detectEncoding(header[29])
+	}
+	dec, err := resolveDecoder(resolvedName)
+	if err != nil {
+		return nil, err
 	}
 
 	numRecords := binary.LittleEndian.Uint32(header[4:8])
@@ -263,7 +269,29 @@ func resolveDecoder(name string) (*encoding.Decoder, error) {
 		return charmap.Windows1252.NewDecoder(), nil
 	case "iso88591", "latin1":
 		return charmap.ISO8859_1.NewDecoder(), nil
+	case "utf8":
+		return encoding.Nop.NewDecoder(), nil
 	default:
-		return nil, fmt.Errorf("unsupported encoding: %q (supported: cp850, windows-1252, iso-8859-1)", name)
+		return nil, fmt.Errorf("unsupported encoding: %q (supported: auto, cp850, windows-1252, iso-8859-1, utf-8)", name)
+	}
+}
+
+// detectEncoding maps the DBF language-driver code (header byte 29) to the
+// closest codepage we support. When the byte is 0x00 (no declaration — the
+// most common case for legacy Clipper/dBase files from the Brazilian ERP
+// world) we fall back to CP850, the DOS codepage those tools wrote by default.
+// Reference: https://www.dbase.com/Knowledgebase/INT/db7_file_fmt.htm
+func detectEncoding(code byte) string {
+	switch code {
+	case 0x01, 0x02, 0x04, 0x69, 0x6A:
+		// 0x01 = CP437 (US DOS) → closest supported is cp850
+		// 0x02 = CP850, 0x04 = Macintosh Roman (map to cp850 fallback)
+		return "cp850"
+	case 0x03, 0x57, 0x58, 0x87, 0x88, 0x89:
+		return "windows-1252"
+	default:
+		// 0x00 (absent) and all others default to cp850 — covers Clipper,
+		// dBase III/IV and FoxBase+ sources, which are the primary audience.
+		return "cp850"
 	}
 }

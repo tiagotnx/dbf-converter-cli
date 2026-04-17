@@ -298,3 +298,38 @@ func TestReader_TrimsTextFields(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "ABC", rec.Values["COD"], "text field must be trimmed")
 }
+
+func TestReader_EncodingAuto(t *testing.T) {
+	fields := []fieldDef{{name: "TXT", typ: 'C', length: 5}}
+	// With language byte 0x02, auto must pick cp850. In CP850 the byte 0x87 maps
+	// to "ç" — a glyph that differs from windows-1252's "‡" for the same byte,
+	// so the decoded output uniquely confirms the codepage selection.
+	records := [][]string{{string([]byte{0x87, ' ', ' ', ' ', ' '})}}
+	data := buildDBF(t, fields, records, nil)
+	data[29] = 0x02 // CP850 language driver
+
+	r, err := NewReader(bytes.NewReader(data), "auto")
+	require.NoError(t, err)
+	rec, err := r.Next()
+	require.NoError(t, err)
+	assert.Equal(t, "ç", rec.Values["TXT"], "cp850 decoding: 0x87 → ç")
+}
+
+func TestDetectEncoding(t *testing.T) {
+	assert.Equal(t, "cp850", detectEncoding(0x02))
+	assert.Equal(t, "windows-1252", detectEncoding(0x03))
+	assert.Equal(t, "windows-1252", detectEncoding(0x57))
+	assert.Equal(t, "cp850", detectEncoding(0x00), "absent language driver → cp850 (legacy Clipper/dBase default)")
+}
+
+func TestReader_EncodingUTF8Passthrough(t *testing.T) {
+	fields := []fieldDef{{name: "TXT", typ: 'C', length: 6}}
+	records := [][]string{{"João"}}
+	data := buildDBF(t, fields, records, nil)
+
+	r, err := NewReader(bytes.NewReader(data), "utf-8")
+	require.NoError(t, err)
+	rec, err := r.Next()
+	require.NoError(t, err)
+	assert.Equal(t, "João", rec.Values["TXT"])
+}

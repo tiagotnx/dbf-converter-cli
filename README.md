@@ -41,7 +41,9 @@ Bases de dados legadas do mundo ERP/contábil brasileiro ainda vivem em `.dbf` (
 ## Funcionalidades
 
 - ✅ Formatos de saída: **CSV**, **JSONL** (NDJSON), **SQL** (`CREATE TABLE` + `INSERT`)
-- ✅ Codificações de entrada: **CP850**, **Windows-1252**, **ISO-8859-1**
+- ✅ Dialetos SQL: `generic` (padrão), `postgres`, `mysql`, `sqlite` via `--dialect`
+- ✅ Codificações de entrada: **auto** (padrão), **CP850**, **Windows-1252**, **ISO-8859-1**, **UTF-8**
+- ✅ Auto-detecção da codificação a partir do byte 29 do header (language driver)
 - ✅ Trim automático de padding DBF em campos de texto
 - ✅ Numéricos parseados para `float64` nativamente
 - ✅ Datas normalizadas (válidas → `YYYY-MM-DD`, inválidas/vazias → `null`)
@@ -49,7 +51,14 @@ Bases de dados legadas do mundo ERP/contábil brasileiro ainda vivem em `.dbf` (
 - ✅ Registros deletados transparentemente ignorados (padrão; configurável)
 - ✅ Motor de filtragem com expressões pré-compiladas ([expr-lang/expr](https://github.com/expr-lang/expr))
 - ✅ `--head N` para amostragem rápida
+- ✅ `--fields` para projetar apenas um subconjunto das colunas
 - ✅ `--schema` gera dicionário de dados JSON (`[nome]_schema.json`)
+- ✅ `--progress` emite progresso em stderr (1 linha/segundo)
+- ✅ `--verbose` ativa logging estruturado em debug via `log/slog`
+- ✅ Stdin/stdout sentinel: use `-` como entrada ou saída para compor pipelines
+- ✅ `version` subcomando e `--version` exibem versão/commit/data de build
+- ✅ `completion` subcomando gera scripts de autocomplete para bash/zsh/fish/powershell
+- ✅ API pública em `pkg/dbf` e `pkg/converter` para consumo como biblioteca
 - ✅ Proteção contra SQL injection no nome da tabela (validação de identificador)
 - ✅ Tolerante a variantes de header com bytes de padding entre `0x0D` e registros
 
@@ -104,15 +113,20 @@ GOOS=darwin GOARCH=arm64 go build -o dbf-converter .
 
 | Flag                        | Curta | Padrão    | Descrição                                                                 |
 |-----------------------------|:-----:|-----------|---------------------------------------------------------------------------|
-| `--input`                   | `-i`  | *(obrig.)*| Caminho do arquivo `.dbf` de entrada                                      |
-| `--output`                  | `-o`  | *(obrig.)*| Caminho do arquivo de saída                                               |
-| `--format`                  | `-f`  | `csv`     | Formato: `csv`, `jsonl`, `sql`                                            |
-| `--encoding`                | `-e`  | `cp850`   | Codificação de origem: `cp850`, `windows-1252`, `iso-8859-1`              |
+| `--input`                   | `-i`  | *(obrig.)*| Caminho do arquivo `.dbf` de entrada (use `-` para stdin)                 |
+| `--output`                  | `-o`  | *(obrig.)*| Caminho do arquivo de saída (use `-` para stdout)                         |
+| `--format`                  | `-f`  | `csv`     | Formato: `csv`, `jsonl`, `sql`, `parquet`                                 |
+| `--encoding`                | `-e`  | `auto`    | Codificação: `auto`, `cp850`, `windows-1252`, `iso-8859-1`, `utf-8`       |
 | `--where`                   |       | *(vazio)* | Expressão de filtro lógica (ver abaixo)                                   |
 | `--head`                    |       | `0`       | Limita processamento a N registros (`0` = sem limite)                     |
 | `--schema`                  |       | `false`   | Gera dicionário de dados em `[nome]_schema.json`                          |
 | `--ignore-deleted`          |       | `true`    | Pula registros marcados como deletados no DBF                             |
 | `--table`                   |       | `data`    | Nome da tabela usado por `--format sql`                                   |
+| `--dialect`                 |       | `generic` | Dialeto SQL: `generic`, `postgres`, `mysql`, `sqlite`                     |
+| `--fields`                  |       | *(todas)* | Lista separada por vírgula das colunas a exportar                         |
+| `--progress`                |       | `false`   | Emite progresso em stderr (uma linha por segundo)                         |
+| `--verbose`                 |       | `false`   | Ativa logs de debug via `log/slog` em stderr                              |
+| `--version`                 |       |           | Imprime a versão e encerra                                                 |
 
 ### Formatos de saída
 
@@ -274,15 +288,57 @@ curl -sSL -o .github/prompts/dbf-convert.prompt.md \
 
 Veja [`skills/dbf-converter/README.md`](skills/dbf-converter/README.md) para detalhes.
 
+## Uso como biblioteca
+
+Além do CLI, o pacote expõe uma API pública estável em `pkg/`:
+
+```go
+import (
+    "os"
+
+    "dbf-converter-cli/pkg/converter"
+    "dbf-converter-cli/pkg/dbf"
+)
+
+// 1) Pipeline completo em uma chamada
+func fullPipeline() error {
+    in, _ := os.Open("clientes.dbf")
+    defer in.Close()
+    out, _ := os.Create("clientes.jsonl")
+    defer out.Close()
+    return converter.Convert(converter.Config{
+        Input: in, Output: out,
+        Format: "jsonl", Encoding: "auto",
+    })
+}
+
+// 2) Leitor de baixo nível para integrar ao seu próprio pipeline
+func customLoop() error {
+    f, _ := os.Open("clientes.dbf")
+    defer f.Close()
+    r, err := dbf.NewReader(f, "auto")
+    if err != nil { return err }
+    for {
+        rec, err := r.Next()
+        if err != nil { return err }
+        if rec == nil { break }
+        _ = rec.Values // map[string]interface{} — pronto para JSON/ML/ETL
+    }
+    return nil
+}
+```
+
 ## Arquitetura
 
 ```
 main.go                       # abre arquivos e delega ao converter
-internal/cli/                 # ParseFlags — validação de argv
+internal/cli/                 # Cobra root command e validação de flags
 internal/converter/           # pipeline streaming: read → filter → export
 internal/dbf/                 # parser DBF próprio (header + tipos C/N/F/D/L/I/M)
 internal/filter/              # wrapper expr-lang (compile once, run per row)
 internal/exporter/            # CSVExporter, JSONLExporter, SQLExporter
+pkg/dbf/                      # API pública estável — reader streaming
+pkg/converter/                # API pública — Convert(Config)
 testdata/gen_fixture.go       # gerador de DBF sintético para smoke tests
 ```
 
@@ -394,8 +450,8 @@ docs(readme): clarify --where examples
 - Suporte a campos **Memo** (`M`) com leitura do `.dbt` / `.fpt` associado
 - Suporte a **Visual FoxPro** com campos `V`, `W`, `T` (timestamp)
 - Mais codepages (CP437, CP852, Shift-JIS)
-- Formato de saída **Parquet**
-- Benchmark suite (`testing.B`) para validar regressões de performance
+- Implementação concreta do exportador **Parquet** (atualmente retorna erro indicando não-implementado)
+- Ampliar a suíte de benchmarks em `internal/converter/bench_test.go`
 
 ---
 

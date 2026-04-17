@@ -42,7 +42,7 @@ Toda decodificação que pudesse ficar à meia-boca é responsabilidade do parse
 - Lógico indeterminado (`?`) → `nil`.
 
 ### 4. Zero dependências tóxicas
-Stack aprovado: `expr-lang/expr`, `spf13/pflag`, `stretchr/testify`, `golang.org/x/text`. Qualquer dependência nova precisa de justificativa no PR.
+Stack aprovado: `expr-lang/expr`, `spf13/cobra` (+ `pflag` transitivo), `stretchr/testify`, `golang.org/x/text`. Qualquer dependência nova precisa de justificativa no PR.
 
 - ❌ Sem `panic` em código de produção. Sempre retorne `error`.
 - ❌ Sem CGO. Build precisa continuar produzindo binário estático.
@@ -53,14 +53,18 @@ Stack aprovado: `expr-lang/expr`, `spf13/pflag`, `stretchr/testify`, `golang.org
 ## Arquitetura
 
 ```
-main.go                    # abre arquivos → Converter.Convert
-internal/cli/              # ParseFlags: argv → Options (valida allow-lists)
-internal/converter/        # Convert: orquestra read→filter→export
-internal/dbf/              # parser DBF (header + tipos C/N/F/D/L/I/M)
+main.go                    # abre arquivos + slog + progresso → converter.Convert
+internal/cli/              # Cobra root command: argv → Options (valida allow-lists)
+internal/converter/        # Convert: orquestra read→filter→export; projeta --fields; emite progresso
+internal/dbf/              # parser DBF (header + tipos C/N/F/D/L/I/M) + auto-detect encoding
 internal/filter/           # wrapper expr-lang (compile-once, run-per-row)
-internal/exporter/         # CSVExporter, JSONLExporter, SQLExporter (interface Exporter)
+internal/exporter/         # CSVExporter, JSONLExporter, SQLExporter (interface Exporter) + dialetos SQL
+pkg/dbf/                   # API pública (type alias para internal/dbf)
+pkg/converter/             # API pública (type alias para internal/converter)
 testdata/gen_fixture.go    # gerador de fixture sintético (//go:build ignore)
 ```
+
+**Sinalizadores do CLI** (atualizados): `-i`/`-o` (obrigatórios, `-` = stdin/stdout), `-f` (csv|jsonl|sql|parquet), `-e` (auto padrão | cp850 | windows-1252 | iso-8859-1 | utf-8), `--where`, `--head`, `--schema`, `--ignore-deleted`, `--table`, `--dialect` (generic|postgres|mysql|sqlite), `--fields`, `--progress`, `--verbose`, `--version`. Subcomandos: `version` (detalhado) e `completion` (shell scripts).
 
 **Regras de camadas** (estritas, checadas em PR):
 

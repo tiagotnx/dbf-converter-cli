@@ -229,6 +229,32 @@ func TestConvert_SQLWithTableName(t *testing.T) {
 	assert.Contains(t, s, "INSERT INTO clientes")
 }
 
+// Progress emits ticks at most once per second. The first record should NOT
+// trigger a tick just because lastTick started at zero time — otherwise the
+// very first line shows bogus numbers like "1/3900 @ 90k rec/s" before the
+// rate has stabilized.
+func TestConvert_ProgressSuppressesFirstTick(t *testing.T) {
+	dbfBytes := sampleDBF(t)
+	var out, progOut bytes.Buffer
+
+	err := Convert(Config{
+		Input:       bytes.NewReader(dbfBytes),
+		Output:      &out,
+		Format:      "csv",
+		Encoding:    "cp850",
+		Progress:    true,
+		ProgressOut: &progOut,
+		InputPath:   "sample.dbf",
+	})
+	require.NoError(t, err)
+
+	// Only the finish() line should have written — no intermediate ticks on a
+	// sub-second run with just 4 records.
+	s := progOut.String()
+	lines := strings.Count(s, "\r")
+	assert.LessOrEqual(t, lines, 1, "expected at most one (final) tick, got %d: %q", lines, s)
+}
+
 func TestConvert_ParquetEndToEnd(t *testing.T) {
 	dbfBytes := sampleDBF(t)
 	var out bytes.Buffer

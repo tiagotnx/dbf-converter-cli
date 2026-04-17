@@ -238,12 +238,14 @@ func newProgress(cfg Config, total uint32) *progress {
 	} else {
 		label = filepath.Base(label)
 	}
+	start := time.Now()
 	return &progress{
-		enabled: true,
-		out:     cfg.ProgressOut,
-		label:   label,
-		total:   total,
-		start:   time.Now(),
+		enabled:  true,
+		out:      cfg.ProgressOut,
+		label:    label,
+		total:    total,
+		start:    start,
+		lastTick: start, // avoid spurious sub-second first-tick output
 	}
 }
 

@@ -42,7 +42,7 @@ Toda decodificação que pudesse ficar à meia-boca é responsabilidade do parse
 - Lógico indeterminado (`?`) → `nil`.
 
 ### 4. Zero dependências tóxicas
-Stack aprovado: `expr-lang/expr`, `spf13/cobra` (+ `pflag` transitivo), `stretchr/testify`, `golang.org/x/text`. Qualquer dependência nova precisa de justificativa no PR.
+Stack aprovado: `expr-lang/expr`, `spf13/cobra` (+ `pflag` transitivo), `stretchr/testify`, `golang.org/x/text`, `parquet-go/parquet-go` (para o exportador Parquet). Qualquer dependência nova precisa de justificativa no PR.
 
 - ❌ Sem `panic` em código de produção. Sempre retorne `error`.
 - ❌ Sem CGO. Build precisa continuar produzindo binário estático.

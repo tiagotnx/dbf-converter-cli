@@ -40,7 +40,7 @@ Bases de dados legadas do mundo ERP/contábil brasileiro ainda vivem em `.dbf` (
 
 ## Funcionalidades
 
-- ✅ Formatos de saída: **CSV**, **JSONL** (NDJSON), **SQL** (`CREATE TABLE` + `INSERT`)
+- ✅ Formatos de saída: **CSV**, **JSONL** (NDJSON), **SQL** (`CREATE TABLE` + `INSERT`), **Parquet** (colunar, comprimido)
 - ✅ Dialetos SQL: `generic` (padrão), `postgres`, `mysql`, `sqlite` via `--dialect`
 - ✅ Codificações de entrada: **auto** (padrão), **CP850**, **Windows-1252**, **ISO-8859-1**, **UTF-8**
 - ✅ Auto-detecção da codificação a partir do byte 29 do header (language driver)
@@ -162,6 +162,22 @@ INSERT INTO clientes (ID, NOME, VALOR, DATA, ATIVO) VALUES (2, 'Maria', NULL, NU
 - Dialeto neutro (compatível com PostgreSQL, SQLite, MySQL 8+).
 - Apóstrofos são escapados (`'O''Brien'`).
 - Nome de tabela validado contra regex `^[A-Za-z_][A-Za-z0-9_]*$` — impede injeção.
+- Use `--dialect postgres|mysql|sqlite` para tipos nativos da base de destino.
+
+#### Parquet
+Formato colunar comprimido, ideal para data lakes e análise. Todas as colunas são declaradas como `optional` para preservar nulos (numéricos, datas e lógicos indeterminados viram `null` em vez de zero/vazio).
+
+```bash
+dbf-converter -i clientes.dbf -o clientes.parquet -f parquet
+```
+Arquivos Parquet podem ser lidos direto por pandas, DuckDB, Apache Spark, PyArrow e Polars:
+```python
+import pandas as pd
+df = pd.read_parquet('clientes.parquet')
+```
+- Datas permanecem como string ISO-8601 (consistente com CSV/JSONL).
+- Numéricos são `DOUBLE`, lógicos são `BOOLEAN`, texto é `BYTE_ARRAY(UTF8)`.
+- Colunas são endereçadas por **nome** em Parquet; a ordem física no arquivo pode diferir da do DBF.
 
 ### Codificações suportadas
 
@@ -450,7 +466,7 @@ docs(readme): clarify --where examples
 - Suporte a campos **Memo** (`M`) com leitura do `.dbt` / `.fpt` associado
 - Suporte a **Visual FoxPro** com campos `V`, `W`, `T` (timestamp)
 - Mais codepages (CP437, CP852, Shift-JIS)
-- Implementação concreta do exportador **Parquet** (atualmente retorna erro indicando não-implementado)
+- Opções de compressão e tamanho de row group configuráveis no exportador Parquet
 - Ampliar a suíte de benchmarks em `internal/converter/bench_test.go`
 
 ---

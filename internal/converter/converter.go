@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"dbf-converter-cli/internal/dbf"
@@ -29,8 +30,20 @@ type Config struct {
 	Fields        []string  // projection — empty = all fields, in DBF order
 	Progress      bool      // emit progress lines to ProgressOut
 	ProgressOut   io.Writer // where progress lines go (typically os.Stderr)
+	ProgressIsTTY bool      // when true, progress renders a visual bar
 	InputPath     string    // label used in progress output; optional
 	SchemaOut     io.Writer // optional — non-nil = emit data dictionary JSON
+	Stats         *Stats    // optional — populated on successful return
+}
+
+// Stats reports how much work Convert actually did. The caller supplies a
+// non-nil pointer via Config.Stats; Convert writes the final tallies before
+// returning. Useful for building a completion summary line outside the
+// converter without giving it a UX responsibility.
+type Stats struct {
+	Emitted int           // rows written to the exporter (post-filter, post-head)
+	Total   uint32        // records declared in the DBF header (includes deleted)
+	Elapsed time.Duration // wall-clock time spent inside Convert
 }
 
 // Convert runs the full streaming pipeline. Records are never materialized as
@@ -54,6 +67,8 @@ func Convert(cfg Config) error {
 	if cfg.Dialect == "" {
 		cfg.Dialect = "generic"
 	}
+
+	start := time.Now()
 
 	reader, err := dbf.NewReader(cfg.Input, cfg.Encoding)
 	if err != nil {
@@ -121,7 +136,16 @@ func Convert(cfg Config) error {
 	}
 	prog.finish(emitted)
 
-	return exp.Close()
+	if err := exp.Close(); err != nil {
+		return err
+	}
+
+	if cfg.Stats != nil {
+		cfg.Stats.Emitted = emitted
+		cfg.Stats.Total = reader.NumRecords()
+		cfg.Stats.Elapsed = time.Since(start)
+	}
+	return nil
 }
 
 // resolveFields optionally narrows the field list to the --fields projection,
@@ -224,6 +248,7 @@ type progress struct {
 	out      io.Writer
 	label    string
 	total    uint32
+	isTTY    bool
 	lastTick time.Time
 	start    time.Time
 }
@@ -244,6 +269,7 @@ func newProgress(cfg Config, total uint32) *progress {
 		out:      cfg.ProgressOut,
 		label:    label,
 		total:    total,
+		isTTY:    cfg.ProgressIsTTY,
 		start:    start,
 		lastTick: start, // avoid spurious sub-second first-tick output
 	}
@@ -270,12 +296,94 @@ func (p *progress) finish(done int) {
 }
 
 func (p *progress) write(done int, now time.Time) {
-	elapsed := now.Sub(p.start)
-	rate := float64(done) / elapsed.Seconds()
-	if p.total > 0 {
-		pct := 100 * float64(done) / float64(p.total)
-		fmt.Fprintf(p.out, "\r%s: %d/%d (%.1f%%) @ %.0f rec/s", p.label, done, p.total, pct, rate)
-	} else {
-		fmt.Fprintf(p.out, "\r%s: %d records @ %.0f rec/s", p.label, done, rate)
+	fmt.Fprint(p.out, "\r", formatProgress(p.label, done, p.total, now.Sub(p.start), p.isTTY))
+}
+
+// formatProgress renders one progress line. Pure function — no clock, no
+// writer — so tests can assert on the exact string for every branch.
+//
+// Fields shown:
+//   - label: input basename (or "stdin")
+//   - done/total when total is known, plus percentage and ETA
+//   - rate in rec/s (compact "k rec/s" past 1000)
+//   - TTY mode adds a fixed-width ASCII bar; plain mode stays CI-friendly
+func formatProgress(label string, done int, total uint32, elapsed time.Duration, isTTY bool) string {
+	rate := 0.0
+	if elapsed > 0 {
+		rate = float64(done) / elapsed.Seconds()
 	}
+
+	var b strings.Builder
+	b.WriteString(label)
+
+	if total > 0 {
+		pct := 100 * float64(done) / float64(total)
+		if isTTY {
+			b.WriteString(" ")
+			b.WriteString(renderBar(pct, 20))
+		}
+		fmt.Fprintf(&b, " %.1f%% %d/%d", pct, done, total)
+	} else {
+		fmt.Fprintf(&b, ": %d records", done)
+	}
+
+	b.WriteString(" @ ")
+	b.WriteString(formatRate(rate))
+
+	if total > 0 && rate > 0 {
+		remaining := int64(total) - int64(done)
+		if remaining > 0 {
+			etaSeconds := float64(remaining) / rate
+			fmt.Fprintf(&b, " ETA %s", formatDuration(time.Duration(etaSeconds*float64(time.Second))))
+		}
+	}
+	return b.String()
+}
+
+func renderBar(pct float64, width int) string {
+	if pct < 0 {
+		pct = 0
+	}
+	if pct > 100 {
+		pct = 100
+	}
+	filled := int(pct / 100 * float64(width))
+	var b strings.Builder
+	b.Grow(width + 2)
+	b.WriteByte('[')
+	for i := 0; i < width; i++ {
+		switch {
+		case i < filled:
+			b.WriteByte('=')
+		case i == filled:
+			b.WriteByte('>')
+		default:
+			b.WriteByte(' ')
+		}
+	}
+	b.WriteByte(']')
+	return b.String()
+}
+
+func formatRate(rate float64) string {
+	if rate >= 1000 {
+		return fmt.Sprintf("%.1fk rec/s", rate/1000)
+	}
+	return fmt.Sprintf("%.0f rec/s", rate)
+}
+
+// formatDuration renders a compact m:ss / h:mm:ss string. Tests care about
+// the exact shape ("00:12", "01:00:00"), so keep this deterministic.
+func formatDuration(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	total := int(d.Seconds())
+	h := total / 3600
+	m := (total % 3600) / 60
+	s := total % 60
+	if h > 0 {
+		return fmt.Sprintf("%02d:%02d:%02d", h, m, s)
+	}
+	return fmt.Sprintf("%02d:%02d", m, s)
 }

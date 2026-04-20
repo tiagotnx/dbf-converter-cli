@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/parquet-go/parquet-go"
 	"github.com/stretchr/testify/assert"
@@ -253,6 +254,87 @@ func TestConvert_ProgressSuppressesFirstTick(t *testing.T) {
 	s := progOut.String()
 	lines := strings.Count(s, "\r")
 	assert.LessOrEqual(t, lines, 1, "expected at most one (final) tick, got %d: %q", lines, s)
+}
+
+// formatProgress is the pure formatter that turns (label, done, total, elapsed)
+// into a single progress line. Extracting it from the tick path makes both the
+// ETA math and the TTY/plain branches testable without mocking a clock.
+func TestFormatProgress_WithTotalAddsETA(t *testing.T) {
+	// 300 records done in 3s at total=1500 → rate=100 rec/s → ETA=12s.
+	line := formatProgress("vendas.dbf", 300, 1500, 3*time.Second, false)
+	assert.Contains(t, line, "300/1500")
+	assert.Contains(t, line, "20.0%")
+	assert.Contains(t, line, "100 rec/s")
+	assert.Contains(t, line, "ETA 00:12")
+}
+
+func TestFormatProgress_UnknownTotalOmitsETA(t *testing.T) {
+	// total=0 means the header didn't declare the record count; we still
+	// report rate but cannot forecast completion.
+	line := formatProgress("stdin", 1234, 0, 2*time.Second, false)
+	assert.Contains(t, line, "1234 records")
+	assert.Contains(t, line, "rec/s")
+	assert.NotContains(t, line, "ETA")
+}
+
+func TestFormatProgress_TTYAddsBar(t *testing.T) {
+	line := formatProgress("vendas.dbf", 300, 1500, 3*time.Second, true)
+	// Bar characters should be present only in TTY mode — plain output keeps
+	// it out to avoid noisy CI logs.
+	assert.Contains(t, line, "[")
+	assert.Contains(t, line, "]")
+	assert.Contains(t, line, "ETA")
+}
+
+func TestFormatProgress_LargeRateUsesK(t *testing.T) {
+	// >= 1000 rec/s switches to the compact "1.2k rec/s" form.
+	line := formatProgress("big.dbf", 15000, 100000, 10*time.Second, false)
+	assert.Contains(t, line, "k rec/s")
+}
+
+func TestFormatProgress_LongETAUsesHours(t *testing.T) {
+	// Remaining 360000 records at 100 rec/s → 3600s → "01:00:00".
+	line := formatProgress("giant.dbf", 100, 360100, 1*time.Second, false)
+	assert.Contains(t, line, "ETA 01:00:00")
+}
+
+// Convert should populate Stats when the caller provides it, so main.go can
+// build a completion summary without the converter owning any UX concern.
+func TestConvert_PopulatesStatsWhenProvided(t *testing.T) {
+	dbfBytes := sampleDBF(t)
+	var out bytes.Buffer
+	var stats Stats
+
+	err := Convert(Config{
+		Input:    bytes.NewReader(dbfBytes),
+		Output:   &out,
+		Format:   "csv",
+		Encoding: "cp850",
+		Stats:    &stats,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 4, stats.Emitted)
+	assert.Equal(t, uint32(4), stats.Total)
+	assert.Greater(t, stats.Elapsed, time.Duration(0))
+}
+
+func TestConvert_StatsCountsFilteredRowsOnly(t *testing.T) {
+	dbfBytes := sampleDBF(t)
+	var out bytes.Buffer
+	var stats Stats
+
+	err := Convert(Config{
+		Input:    bytes.NewReader(dbfBytes),
+		Output:   &out,
+		Format:   "csv",
+		Encoding: "cp850",
+		Where:    "STATUS == 'A'",
+		Stats:    &stats,
+	})
+	require.NoError(t, err)
+	// 3 of 4 sample rows have STATUS='A' (IDs 1, 2, 4).
+	assert.Equal(t, 3, stats.Emitted)
+	assert.Equal(t, uint32(4), stats.Total, "Total always reflects header count, not post-filter")
 }
 
 func TestConvert_ParquetEndToEnd(t *testing.T) {

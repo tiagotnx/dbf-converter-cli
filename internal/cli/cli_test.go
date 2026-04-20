@@ -115,6 +115,50 @@ func TestParseFlags_SchemaOutOverridesDerivedPath(t *testing.T) {
 	assert.True(t, opts.Schema)
 }
 
+// `preview <file>` is sugar for `-i <file> -o - -f jsonl --head 20 --schema`.
+// It's the "just show me what's in this DBF" shortcut — the most common first
+// step when handed an unknown file.
+func TestPreviewSubcommand_BuildsDefaultOptions(t *testing.T) {
+	var captured *Options
+	cmd := NewRootCommand(BuildInfo{Version: "test"}, func(o *Options) error {
+		captured = o
+		return nil
+	})
+	cmd.SetOut(discardWriter{})
+	cmd.SetErr(discardWriter{})
+	cmd.SetArgs([]string{"preview", "clientes.dbf"})
+	require.NoError(t, cmd.Execute())
+
+	require.NotNil(t, captured, "preview must invoke the same runner as the root command")
+	assert.Equal(t, "clientes.dbf", captured.Input)
+	assert.Equal(t, "-", captured.Output, "preview writes to stdout")
+	assert.Equal(t, "jsonl", captured.Format)
+	assert.Equal(t, 20, captured.Head)
+	assert.True(t, captured.Schema)
+}
+
+func TestPreviewSubcommand_HeadOverride(t *testing.T) {
+	var captured *Options
+	cmd := NewRootCommand(BuildInfo{Version: "test"}, func(o *Options) error {
+		captured = o
+		return nil
+	})
+	cmd.SetOut(discardWriter{})
+	cmd.SetErr(discardWriter{})
+	cmd.SetArgs([]string{"preview", "--head", "5", "clientes.dbf"})
+	require.NoError(t, cmd.Execute())
+	assert.Equal(t, 5, captured.Head)
+}
+
+func TestPreviewSubcommand_RequiresPathArgument(t *testing.T) {
+	cmd := NewRootCommand(BuildInfo{Version: "test"}, func(*Options) error { return nil })
+	cmd.SetOut(discardWriter{})
+	cmd.SetErr(discardWriter{})
+	cmd.SetArgs([]string{"preview"})
+	err := cmd.Execute()
+	assert.Error(t, err, "preview without a path should fail loudly")
+}
+
 func TestVersionSubcommand(t *testing.T) {
 	info := BuildInfo{Version: "1.2.3", Commit: "abc", Date: "2025-01-01"}
 	cmd := NewRootCommand(info, func(*Options) error { return nil })

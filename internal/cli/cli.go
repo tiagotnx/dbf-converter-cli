@@ -102,7 +102,44 @@ skipped by default. Use '-' as the input/output path to pipe via stdin/stdout.`,
 	_ = cmd.MarkFlagRequired("output")
 
 	cmd.AddCommand(newVersionCmd(info))
+	cmd.AddCommand(newPreviewCmd(opts, run))
 
+	return cmd
+}
+
+// newPreviewCmd wires `dbf-converter preview <file>` as sugar for
+//
+//	-i <file> -o - -f jsonl --head 20 --schema
+//
+// It's the first-contact shortcut — dump a sample to the terminal with the
+// schema alongside. Shares the root-command Options pointer so that flags
+// already parsed at the root level still apply (encoding, filter, etc.).
+func newPreviewCmd(opts *Options, run RunFunc) *cobra.Command {
+	head := 20
+
+	cmd := &cobra.Command{
+		Use:   "preview <file>",
+		Short: "Print the first N records (and schema) of a DBF to stdout",
+		Long: `preview is sugar for the most common first-contact command:
+
+  dbf-converter -i <file> -o - -f jsonl --head 20 --schema
+
+Use --head to change the sample size. The schema is written to
+[name]_schema.json next to the input.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			opts.Input = args[0]
+			opts.Output = "-"
+			opts.Format = "jsonl"
+			opts.Head = head
+			opts.Schema = true
+			if err := validateOptions(opts); err != nil {
+				return err
+			}
+			return run(opts)
+		},
+	}
+	cmd.Flags().IntVar(&head, "head", 20, "Number of records to preview")
 	return cmd
 }
 

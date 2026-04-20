@@ -65,7 +65,9 @@ pkg/converter/             # API pública (type alias para internal/converter)
 testdata/gen_fixture.go    # gerador de fixture sintético (//go:build ignore)
 ```
 
-**Sinalizadores do CLI** (atualizados): `-i`/`-o` (obrigatórios, `-` = stdin/stdout), `-f` (csv|jsonl|sql|parquet), `-e` (auto padrão | cp850 | windows-1252 | iso-8859-1 | utf-8), `--where`, `--head`, `--schema`, `--schema-out <path>` (caminho explícito do schema; implica `--schema`), `--ignore-deleted`, `--table`, `--dialect` (generic|postgres|mysql|sqlite), `--fields`, `--progress`, `--verbose`, `--version`. Subcomandos: `version` (detalhado) e `completion` (shell scripts).
+**Sinalizadores do CLI** (atualizados): `-i`/`-o` (obrigatórios, `-` = stdin/stdout), `-f` (csv|jsonl|sql|parquet), `-e` (auto padrão | cp850 | windows-1252 | iso-8859-1 | utf-8), `--where`, `--head`, `--schema`, `--schema-out <path>` (caminho explícito do schema; implica `--schema`), `--ignore-deleted`, `--table`, `--dialect` (generic|postgres|mysql|sqlite), `--fields`, `--progress` (barra + ETA em TTY, texto em pipe/CI), `--verbose`, `--version`. Subcomandos: `preview <file>` (atalho para `-o - -f jsonl --head 20 --schema`), `version` (detalhado), `completion` (shell scripts).
+
+**UX de progresso e resumo**: a formatação de progresso vive em `internal/converter/formatProgress` (função pura, testável sem relógio) — mostra barra `[=====>   ]` + percentual + ETA quando `ProgressIsTTY=true`, texto plano caso contrário. A decisão TTY-vs-pipe e a linha final de resumo (`✓ N/M records → out.csv (size) in Xs @ rate rec/s`) ficam em `main.go`, que detecta TTY via `os.File.Stat()` + `os.ModeCharDevice` (zero dep nova). `converter.Convert` preenche `Config.Stats` (Emitted/Total/Elapsed) quando o caller fornece o ponteiro, sem imprimir nada por conta própria — princípio "converter é orquestrador burro, UX fica na borda".
 
 **Regras de camadas** (estritas, checadas em PR):
 

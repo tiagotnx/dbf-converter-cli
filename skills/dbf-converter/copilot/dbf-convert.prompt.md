@@ -25,15 +25,17 @@ Ask only for what's missing:
 ## Steps
 
 1. Verify `dbf-converter` is on PATH. If not, propose installation from GitHub Releases.
-2. Run a 1-row preview with `--schema` to surface the field list:
+2. Run the `preview` subcommand (built-in sugar for `-i <file> -o - -f jsonl --head 20 --schema`) to surface the field list and sample rows in one shot:
    ```bash
-   dbf-converter -i <input> -o /tmp/dbf_preview.jsonl -f jsonl --head 1 --schema
+   dbf-converter preview <input>
+   # narrower sniff if output is large:
+   dbf-converter preview <input> --head 1
    ```
-3. Show the schema field list and the preview row to the user. Confirm field names before writing the real command (DBF headers are case-sensitive, usually uppercase, often cryptic like `LAN_ES05`).
+3. Show the schema field list and the preview rows to the user. Confirm field names before writing the real command (DBF headers are case-sensitive, usually uppercase, often cryptic like `LAN_ES05`).
 4. Build the final command using the goal-inferred format and any filter.
 5. Execute and report:
-   - Record count in output
-   - First 3 rows (sanity check on encoding/trim)
+   - Capture the CLI's own stderr completion summary (`✓ N/M records → out (size) in Xs @ rate`) instead of re-counting with `wc -l`
+   - First 3 rows of the output (sanity check on encoding/trim)
    - Any warnings (garbled accents → suggest alternate encoding)
 
 ## Guardrails
@@ -47,7 +49,11 @@ Ask only for what's missing:
 ## Example complete invocations
 
 ```bash
-# Explore unknown file (auto-detect encoding)
+# First-contact inspection — 20 rows to the terminal + schema next to input
+dbf-converter preview clientes.dbf
+dbf-converter preview clientes.dbf --head 100   # larger sample
+
+# Same thing with an explicit sample file on disk (use when you need to save it)
 dbf-converter -i clientes.dbf -o /tmp/sample.jsonl -f jsonl --head 100 --schema
 
 # Full export with filter

@@ -29,10 +29,15 @@ command -v dbf-converter || echo "install from https://github.com/tiagotnx/dbf-c
 - `--table` — table name used by `--format sql` (default `data`)
 - `--dialect` — `generic` (default) / `postgres` / `mysql` / `sqlite`; only meaningful with `-f sql`
 - `--fields A,B,C` — project a subset of columns in the order given
-- `--progress` — one-line stderr progress, at most one tick per second
+- `--progress` — stderr progress (visual bar + pct + ETA when stderr is a TTY; plain text in CI/pipes), at most one tick per second
 - `--verbose` — enable `log/slog` debug output on stderr
 - `--version` / `-v` — print version and exit
-- Subcommands: `version`, `completion bash|zsh|fish|powershell`
+- Subcommands:
+  - `preview <file>` — sugar for `-i <file> -o - -f jsonl --head 20 --schema`. **Preferred first-contact command** for an unknown DBF
+  - `version` — detailed version + commit + build date
+  - `completion bash|zsh|fish|powershell` — shell completion scripts
+
+**Completion summary on stderr** — at the end of a run (when stderr is a TTY or `--progress`/`--verbose` is set) the CLI prints `✓ N/M records → out.csv (2.1 MB) in 8.3s @ 1.2k rec/s`. `N/M` appears when emitted differs from declared (filter or deletes). Silent pipes stay silent.
 
 ## Decision hints when auto-completing commands
 
@@ -41,7 +46,7 @@ command -v dbf-converter || echo "install from https://github.com/tiagotnx/dbf-c
 - For Excel / DuckDB / pandas, prefer `-f csv`.
 - For DB ingestion, prefer `-f sql` with an explicit `--table` and `--dialect` matching the target database.
 - For data lakes / long-term storage / Spark pipelines, prefer `-f parquet`.
-- On first contact with an unknown DBF, suggest `--head 1 --schema` to inspect before full conversion.
+- On first contact with an unknown DBF, suggest `dbf-converter preview <file>` — it's the built-in shortcut for "show me 20 records + schema" and is strictly preferred over building the long form by hand.
 - When writing to a shared, read-only, or versioned directory (`testdata/`, `data/`), suggest `--schema-out <path>` instead of `--schema`.
 
 ## Data semantics after conversion

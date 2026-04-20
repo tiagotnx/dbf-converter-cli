@@ -101,7 +101,9 @@ go install github.com/tiagotnx/dbf-converter-cli@latest
 
 Both variants agree on the same core knowledge:
 
-- **Flag surface** — `-i`, `-o`, `-f`, `-e`, `--where`, `--head`, `--schema`, `--schema-out`, `--ignore-deleted`, `--table`, `--dialect`, `--fields`, `--progress`, `--verbose`, `--version`; plus `version` / `completion` subcommands
+- **Flag surface** — `-i`, `-o`, `-f`, `-e`, `--where`, `--head`, `--schema`, `--schema-out`, `--ignore-deleted`, `--table`, `--dialect`, `--fields`, `--progress` (TTY bar + ETA, plain in CI/pipes), `--verbose`, `--version`; plus `preview` / `version` / `completion` subcommands
+- **First-contact command** — `dbf-converter preview <file>` as the canonical "show me what's in here" shortcut (JSONL to stdout + schema next to input)
+- **Completion summary** — `✓ N/M records → out.csv (size) in Xs @ rate` line printed to stderr at end of run (interactive or `--progress`/`--verbose`)
 - **Format decision tree** — CSV for spreadsheets/DuckDB, JSONL for LLMs/pipelines, SQL (with a dialect) for DB ingestion, Parquet for data lakes
 - **Encoding defaults** — `auto` (reads the DBF language-driver byte) with CP850 / Windows-1252 / ISO-8859-1 / UTF-8 as explicit overrides
 - **Filter language** — expr-lang syntax, null guards (`FIELD != nil && ...`), string helpers

@@ -56,16 +56,35 @@ Or `go install github.com/tiagotnx/dbf-converter-cli@latest` if the user has Go 
 | `--table` | — | `data` | Table name for `--format sql` |
 | `--dialect` | — | `generic` | SQL dialect: `generic` / `postgres` / `mysql` / `sqlite` |
 | `--fields` | — | *(all)* | Comma-separated subset of columns to emit (preserves the given order) |
-| `--progress` | — | `false` | Emit a progress line to stderr at most once per second |
+| `--progress` | — | `false` | Progress line to stderr (bar + pct + ETA when stderr is a TTY, plain text in CI/pipes) |
 | `--verbose` | — | `false` | Enable `log/slog` debug output on stderr |
 | `--version` | `-v` | — | Print version and exit |
 
-Subcommands: `version` (prints version + commit + build date), `completion bash|zsh|fish|powershell` (generates shell completion scripts).
+Subcommands:
+
+- `preview <file>` — sugar for `-i <file> -o - -f jsonl --head 20 --schema`. Prints the first 20 records as JSONL to **stdout** and writes the schema next to the input. Use `--head N` to change the sample size. **This is the preferred first-contact command** for an unknown DBF — prefer it over building the long flag form by hand.
+- `version` — prints version + commit + build date.
+- `completion bash|zsh|fish|powershell` — generates shell completion scripts.
+
+**Completion summary** — at the end of every run (when stderr is a TTY, or when `--progress` / `--verbose` is set), a one-line summary is printed to stderr:
+
+```
+✓ 9856/10000 records → vendas.csv (2.1 MB) in 8.3s @ 1.2k rec/s
+```
+
+`N/M` appears when the emitted count differs from the header's declared count (filter active, or deleted rows skipped). Size is omitted when the output is stdout. Silent pipes (no TTY, no `--progress`) stay silent so downstream consumers aren't affected.
 
 ## Decision tree — what to run
 
 ### Step 1: Always inspect the schema first
-Before any real conversion, run with `--head 1 --schema` to learn the field list and a sample row:
+Before any real conversion, use the `preview` subcommand — it's the shortcut for exactly this first step:
+
+```bash
+dbf-converter preview clientes.dbf           # 20 records to stdout + clientes_schema.json
+dbf-converter preview clientes.dbf --head 1  # bare-minimum sniff
+```
+
+Equivalent long form (use only if you need to *save* the sample to a file):
 
 ```bash
 dbf-converter -i clientes.dbf -o /tmp/preview.jsonl -f jsonl --head 1 --schema
@@ -128,8 +147,14 @@ Filter language quick reference:
 ### Workflow A — "Quick explore this DBF"
 
 ```bash
+dbf-converter preview <file>.dbf              # default 20 rows to stdout + schema next to input
+dbf-converter preview <file>.dbf --head 100   # more rows
+```
+
+The schema is written to `<file>_schema.json`; the JSONL goes straight to the terminal so it can be read inline or piped to `jq`. When you need to keep the sample on disk, fall back to the long form:
+
+```bash
 dbf-converter -i <file>.dbf -o /tmp/sample.jsonl -f jsonl --head 100 --schema
-# Read the schema JSON + the sample JSONL to brief the user.
 ```
 
 ### Workflow B — "Clean full export for analysis"
@@ -208,7 +233,7 @@ Every row is "AI-ready" after conversion:
 
 After running a conversion, always:
 
-1. Report record counts: `wc -l <output>` (CSV/JSONL) or grep `INSERT` count (SQL).
+1. Capture the CLI's own completion summary on stderr (`✓ N/M records → out (size) in Xs @ rate`). It already carries the record count, output size, and elapsed time — don't re-count with `wc -l` unless you need something it doesn't expose.
 2. Show the first few rows so the user can sanity-check encoding and trim.
 3. If `--schema` was used, surface the field count and highlight any types the user should know about (dates, logicals, long text).
 

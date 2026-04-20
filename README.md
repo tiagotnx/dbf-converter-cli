@@ -17,6 +17,8 @@ Construído com metodologia **TDD** (Red-Green-Refactor). Todo o código princip
   - [Codificações suportadas](#codificações-suportadas)
   - [Motor de filtragem (`--where`)](#motor-de-filtragem---where)
   - [Geração de schema (`--schema`)](#geração-de-schema---schema)
+  - [Subcomando `preview`](#subcomando-preview)
+  - [Progresso e resumo de conclusão](#progresso-e-resumo-de-conclusão)
 - [Exemplos práticos](#exemplos-práticos)
 - [Arquitetura](#arquitetura)
 - [Testes](#testes)
@@ -54,9 +56,11 @@ Bases de dados legadas do mundo ERP/contábil brasileiro ainda vivem em `.dbf` (
 - ✅ `--head N` para amostragem rápida
 - ✅ `--fields` para projetar apenas um subconjunto das colunas
 - ✅ `--schema` gera dicionário de dados JSON (`[nome]_schema.json`)
-- ✅ `--progress` emite progresso em stderr (1 linha/segundo)
+- ✅ `--progress` emite progresso em stderr com **barra visual, percentual, ETA e rate** em terminal interativo (degrada automaticamente para texto em CI/pipes)
+- ✅ **Resumo de conclusão** automático em stderr após a conversão (`✓ N/M records → out.csv (2.1 KB) in 3.4s @ 1.7k rec/s`)
 - ✅ `--verbose` ativa logging estruturado em debug via `log/slog`
 - ✅ Stdin/stdout sentinel: use `-` como entrada ou saída para compor pipelines
+- ✅ Subcomando `preview <file>` para inspecionar um DBF no terminal em um único comando
 - ✅ `version` subcomando e `--version` exibem versão/commit/data de build
 - ✅ `completion` subcomando gera scripts de autocomplete para bash/zsh/fish/powershell
 - ✅ API pública em `pkg/dbf` e `pkg/converter` para consumo como biblioteca
@@ -257,6 +261,49 @@ dbf-converter -i data/clientes.dbf -o clientes.csv --schema-out build/clientes.s
 - Alimentar LLMs com o contexto das colunas
 - Gerar DDL automaticamente em outro dialeto
 - Auditar bases legadas sem documentação
+
+### Subcomando `preview`
+
+`preview <file>` é um atalho para o primeiro comando que se roda em um DBF desconhecido:
+
+```bash
+dbf-converter preview clientes.dbf
+# equivalente a:
+dbf-converter -i clientes.dbf -o - -f jsonl --head 20 --schema
+```
+
+- Emite JSONL direto no **terminal** (stdout) — não cria arquivo de saída.
+- Grava o schema em `clientes_schema.json` ao lado do input (igual ao `--schema`).
+- Aceita `--head N` para mudar o tamanho da amostra.
+
+```bash
+dbf-converter preview movpro01.dbf --head 5   # só os 5 primeiros registros
+dbf-converter preview movpro01.dbf | jq .     # inspecionar com jq
+```
+
+### Progresso e resumo de conclusão
+
+Com `--progress`, o conversor emite em stderr uma linha atualizada **uma vez por segundo** indicando o andamento. Quando stderr é um terminal interativo, o formato inclui barra visual, percentual, total, rate e ETA:
+
+```
+vendas.dbf [=======>            ] 42.3% 4230/10000 @ 1.2k rec/s ETA 00:04:32
+```
+
+Em pipes ou CI (stderr não-TTY), o mesmo dado é emitido em texto plano (sem barra) para não poluir logs:
+
+```
+vendas.dbf 42.3% 4230/10000 @ 1.2k rec/s ETA 00:04:32
+```
+
+Ao final — independentemente de `--progress` — uma linha de **resumo de conclusão** é impressa em stderr sempre que o usuário está em terminal interativo ou usou `--progress`/`--verbose`:
+
+```
+✓ 9856/10000 records → vendas.csv (2.1 MB) in 8.3s @ 1.2k rec/s
+```
+
+- Mostra `N/M` quando `N != M` (ex.: filtro ativo ou deletados descartados).
+- Omite o tamanho quando a saída é stdout (`-`).
+- **Nunca** é impresso em pipes silenciosos (consumidores de stdout não são afetados; stderr permanece limpo quando redirecionado).
 
 ---
 
